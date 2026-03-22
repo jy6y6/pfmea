@@ -17,7 +17,6 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.drawing.image import Image as XLImage
 from openpyxl.utils import get_column_letter
 from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
-from streamlit_draggable import draggable
 
 # ===================== 全局配置 =====================
 st.set_page_config(
@@ -103,34 +102,6 @@ h2, h3 {
     overflow: hidden;
     border: 1px solid #E6EFD9;
 }
-/* 拖拽预览网格 */
-.drag-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-    gap: 16px;
-    margin-top: 20px;
-}
-.drag-item {
-    background: #FFFFFF;
-    border: 1px solid #E6EFD9;
-    border-radius: 12px;
-    padding: 12px;
-    text-align: center;
-    cursor: grab;
-    transition: 0.2s;
-}
-.drag-item:active {
-    cursor: grabbing;
-    transform: scale(0.98);
-    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-}
-.drag-item img {
-    max-width: 90px;
-    max-height: 90px;
-    object-fit: contain;
-    border-radius: 8px;
-    margin-bottom: 8px;
-}
 /* 分割线 */
 hr {
     border: none;
@@ -211,11 +182,11 @@ def export_history_to_excel(history_df):
     output.seek(0)
     return output
 
-# ===================== 模块一：Excel图片工具（🔥长按拖拽排序） =====================
+# ===================== 模块一：Excel图片工具（稳定版，无拖拽依赖） =====================
 def excel_image_tool():
     st.markdown("<div class='card'>", unsafe_allow_html=True)
     st.header("📸 Excel 图片批量插入工具")
-    st.markdown("支持多选图片 → 长按拖拽排序 → 一键插入Excel指定区域")
+    st.markdown("支持多选图片 → 输入数字排序 → 一键插入Excel指定区域")
 
     # 单元格区域设置
     col1, col2 = st.columns(2)
@@ -254,29 +225,32 @@ def excel_image_tool():
             st.session_state.image_order = list(range(len(st.session_state.uploaded_images)))
         st.success(f"✅ 已上传 {len(st.session_state.uploaded_images)} 张图片")
 
-    # 🔥 长按拖拽排序（核心优化）
+    # 🔥 稳定版：数字输入排序（替代拖拽）
     if st.session_state.uploaded_images and total_cells > 0:
-        st.subheader("📊 长按拖拽排序（0.4s后拖动）")
-        # 生成拖拽项
-        drag_items = []
-        for idx in st.session_state.image_order:
-            name, img_bytes = st.session_state.uploaded_images[idx]
-            img_b64 = base64.b64encode(img_bytes).decode()
-            drag_items.append({
-                "id": str(idx),
-                "content": f'<div class="drag-item"><img src="data:image/png;base64,{img_b64}"><div style="font-size:12px;color:#666">{name[:10]}</div></div>'
-            })
-        # 拖拽组件
-        result = draggable(
-            items=drag_items,
-            key="drag_sorter",
-            animation=200,
-            ghost_class="drag-ghost"
+        st.subheader("📊 调整图片顺序（输入数字，1为第一个）")
+        order_df = pd.DataFrame({
+            "图片名称": [name for name, _ in st.session_state.uploaded_images],
+            "顺序": st.session_state.image_order
+        })
+        edited_df = st.data_editor(
+            order_df,
+            use_container_width=True,
+            num_rows="dynamic",
+            column_config={
+                "顺序": st.column_config.NumberColumn(
+                    min_value=1,
+                    max_value=len(st.session_state.uploaded_images),
+                    step=1,
+                    help="输入1~N的数字，数字越小越靠前"
+                )
+            }
         )
-        # 更新顺序
-        if result:
-            new_order = [int(item["id"]) for item in result]
-            st.session_state.image_order = new_order
+        # 应用排序
+        if st.button("🔄 应用排序"):
+            sorted_df = edited_df.sort_values("顺序").reset_index(drop=True)
+            st.session_state.image_order = sorted_df.index.tolist()
+            st.success("✅ 排序已应用！")
+            st.rerun()
 
         # 显示当前顺序
         order_names = [st.session_state.uploaded_images[idx][0][:15] for idx in st.session_state.image_order]
@@ -310,19 +284,16 @@ def excel_image_tool():
                     end_col = openpyxl.utils.column_index_from_string(end_match.group(1))
                     end_row = int(end_match.group(2))
 
-                    # 创建工作簿
                     wb = existing_wb if existing_wb else Workbook()
                     ws = wb.active
                     if not existing_wb:
                         ws.title = "图片表格"
 
-                    # 设置行高列宽
                     for row in range(start_row, end_row+1):
                         ws.row_dimensions[row].height = 160
                     for col in range(start_col, end_col+1):
                         ws.column_dimensions[get_column_letter(col)].width = 16
 
-                    # 插入图片
                     idx = 0
                     for r in range(start_row, end_row+1):
                         for c in range(start_col, end_col+1):
@@ -363,7 +334,6 @@ def excel_image_tool():
                     st.error(f"❌ 生成失败: {e}")
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # 返回首页
     if st.button("🏠 返回首页", use_container_width=True):
         st.session_state.current_page = "home"
         st.rerun()
@@ -466,7 +436,7 @@ def image_push_tool():
         st.session_state.current_page = "home"
         st.rerun()
 
-# ===================== 模块三：PFMEA智能生成（🔥修复AI+界面升级） =====================
+# ===================== 模块三：PFMEA智能生成（修复AI+界面升级） =====================
 BATTERY_PROCESS_LIB = {
     "电芯来料检验": [
         {"失效模式": "电芯外观尺寸超差", "失效后果": "电芯无法装入模组壳体", "失效原因": "来料尺寸公差不符合图纸要求", "预防措施": "制定电芯来料检验规范，量具定期校准", "探测措施": "首件全尺寸检验，巡检按AQL抽样", "严重度S": 6, "频度O": 3, "探测度D": 4, "AP等级": "中"},
@@ -512,9 +482,9 @@ def generate_pfmea_ai(process_name, product_type, scheme_count=3):
         data = {
             "model": "doubao-pro",
             "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.7
+            "temperature": 0.3
         }
-        res = session.post(API_URL, headers=headers, json=data, timeout=60)
+        res = session.post(API_URL, headers=headers, json=data, timeout=30)
         res.raise_for_status()
         content = res.json()["choices"][0]["message"]["content"]
         content = re.sub(r"```json|```", "", content.strip())
@@ -522,7 +492,7 @@ def generate_pfmea_ai(process_name, product_type, scheme_count=3):
     except Exception as e:
         return None, f"AI生成失败：{str(e)}"
 
-# 知识库/导出函数（保留优化）
+# 知识库/导出函数
 def parse_pfmea_excel(file_bytes):
     try:
         df = pd.read_excel(io.BytesIO(file_bytes), engine='openpyxl')
@@ -673,7 +643,7 @@ def main():
                 st.markdown("<div class='card' style='text-align:center;padding:32px 20px;'>", unsafe_allow_html=True)
                 st.image("https://img.icons8.com/fluency/96/6F9E6F/microsoft-excel-2019.png", width=70)
                 st.subheader("Excel 图片工具")
-                st.markdown("长按拖拽 · 批量插入")
+                st.markdown("数字排序 · 批量插入")
                 if st.button("进入工具", key="e", use_container_width=True):
                     st.session_state.current_page="excel_image"
                     st.rerun()
