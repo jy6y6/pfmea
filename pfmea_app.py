@@ -76,13 +76,24 @@ st.markdown("""
         overflow: hidden;
         font-size: 14px;
     }
-    /* 标签样式 */
-    .st-emotion-cache-1v0mbdj {
-        background-color: #e9f3e0;
+    /* 缩略图网格 */
+    .preview-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+        gap: 10px;
+        margin-top: 10px;
     }
-    /* 滑块样式 */
-    .stSlider div[data-baseweb="slider"] {
-        margin-top: 20px;
+    .preview-cell {
+        border: 1px solid #ddd;
+        border-radius: 8px;
+        padding: 8px;
+        text-align: center;
+        background: #f9f9f9;
+    }
+    .preview-cell img {
+        max-width: 80px;
+        max-height: 80px;
+        object-fit: contain;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -206,57 +217,52 @@ def excel_image_tool():
         st.session_state.image_order = list(range(len(st.session_state.uploaded_images)))
         st.success(f"已上传 {len(st.session_state.uploaded_images)} 张图片")
 
-    # 顺序调整（使用滑块/数字输入）
-    if st.session_state.uploaded_images:
-        st.subheader("调整图片顺序（拖动滑块移动图片）")
-        # 显示当前顺序
-        order_display = []
-        for idx in st.session_state.image_order:
-            order_display.append(st.session_state.uploaded_images[idx][0][:20])
-        st.write("当前顺序：", " → ".join(order_display))
+    # 预览布局按钮（带缩略图）
+    if st.session_state.uploaded_images and total_cells > 0:
+        if st.button("🔍 预览布局（显示缩略图）", use_container_width=True):
+            st.session_state.show_preview = True
+        else:
+            st.session_state.show_preview = False
 
-        # 对每张图片提供滑块调整
-        for i, (name, _) in enumerate(st.session_state.uploaded_images):
-            col1, col2, col3 = st.columns([1, 3, 1])
-            with col1:
-                st.image(io.BytesIO(st.session_state.uploaded_images[i][1]), width=60, caption=name[:15])
-            with col2:
-                new_pos = st.slider(
-                    f"移动 {name[:15]}",
-                    min_value=0,
-                    max_value=len(st.session_state.uploaded_images)-1,
-                    value=st.session_state.image_order.index(i),
-                    key=f"slider_{i}"
-                )
-            with col3:
-                if st.button(f"确定位置", key=f"set_{i}"):
-                    # 重新排序
-                    current_idx = st.session_state.image_order.index(i)
-                    if current_idx != new_pos:
-                        order = st.session_state.image_order
-                        order.pop(current_idx)
-                        order.insert(new_pos, i)
-                        st.session_state.image_order = order
-                        st.rerun()
-            st.divider()
-
-        # 预览表格（模拟Excel样式）
-        if total_cells > 0:
-            st.subheader("📋 实时预览（按当前顺序填充）")
-            preview_data = []
-            for r in range(rows):
-                row_cells = []
-                for c in range(cols):
-                    idx = r * cols + c
+        if st.session_state.get("show_preview", False):
+            st.subheader("📋 实时预览（缩略图 + 位置调整）")
+            # 计算需要显示的网格
+            preview_rows = rows
+            preview_cols = cols
+            # 创建一个容器展示网格
+            for r in range(preview_rows):
+                cols_layout = st.columns(preview_cols)
+                for c in range(preview_cols):
+                    idx = r * preview_cols + c
                     if idx < len(st.session_state.uploaded_images):
                         img_idx = st.session_state.image_order[idx]
-                        img_name = st.session_state.uploaded_images[img_idx][0][:8]
-                        row_cells.append(img_name)
+                        img_name, img_bytes = st.session_state.uploaded_images[img_idx]
+                        with cols_layout[c]:
+                            # 显示缩略图
+                            st.image(io.BytesIO(img_bytes), width=80, caption=img_name[:10])
+                            # 提供位置输入框
+                            new_pos = st.number_input(
+                                f"位置", min_value=0, max_value=len(st.session_state.uploaded_images)-1,
+                                value=idx, key=f"pos_{r}_{c}", step=1
+                            )
+                            if new_pos != idx:
+                                # 重新排序
+                                order = st.session_state.image_order
+                                # 找到当前图片的索引
+                                current_idx = order.index(img_idx)
+                                # 移除并插入新位置
+                                order.pop(current_idx)
+                                order.insert(new_pos, img_idx)
+                                st.session_state.image_order = order
+                                st.rerun()
                     else:
-                        row_cells.append("空")
-                preview_data.append(row_cells)
-            preview_df = pd.DataFrame(preview_data, columns=[f"{chr(65+i)}" for i in range(cols)])
-            st.table(preview_df)
+                        with cols_layout[c]:
+                            st.markdown("空")
+            # 显示当前顺序摘要
+            order_display = []
+            for idx in st.session_state.image_order:
+                order_display.append(st.session_state.uploaded_images[idx][0][:20])
+            st.write("**当前顺序：** " + " → ".join(order_display))
 
     # Excel 来源选择
     excel_source = st.radio("Excel 来源", ["新建空白工作簿", "上传现有 Excel 文件"])
@@ -456,7 +462,7 @@ def image_push_tool():
     st.markdown("</div>", unsafe_allow_html=True)
 
 # ===================== 模块三：PFMEA 智能生成工具 =====================
-# ------------------------- 本地标准库（每个工序至少3组方案）-------------------------
+# ------------------------- 本地标准库（每个工序至少3组方案，扩充工序）-------------------------
 BATTERY_PROCESS_LIB = {
     "电芯来料检验": [
         {"失效模式": "电芯外观尺寸超差", "失效后果": "电芯无法装入模组壳体", "失效原因": "来料尺寸公差不符合图纸要求", "预防措施": "制定电芯来料检验规范，量具定期校准", "探测措施": "首件全尺寸检验，巡检按AQL抽样", "严重度S": 6, "频度O": 3, "探测度D": 4, "AP等级": "中"},
@@ -472,6 +478,21 @@ BATTERY_PROCESS_LIB = {
         {"失效模式": "焊接熔深不足", "失效后果": "连接强度不足，虚焊导致断路", "失效原因": "激光功率不稳定，焦距偏移", "预防措施": "每日焊接参数验证，设备定期维护", "探测措施": "焊接后拉力测试，在线监控", "严重度S": 8, "频度O": 2, "探测度D": 2, "AP等级": "高"},
         {"失效模式": "焊接飞溅", "失效后果": "污染其他部件，可能引起短路", "失效原因": "保护气体流量不足，板材表面脏污", "预防措施": "清洁板材，优化焊接参数", "探测措施": "目视检查，飞溅残留检测", "严重度S": 6, "频度O": 3, "探测度D": 3, "AP等级": "中"},
         {"失效模式": "焊接位置偏移", "失效后果": "焊接区域未对准，强度不足", "失效原因": "定位夹具松动，视觉定位误差", "预防措施": "定期校准夹具，视觉定位自检", "探测措施": "首件全检，过程SPC监控", "严重度S": 7, "频度O": 2, "探测度D": 2, "AP等级": "高"},
+    ],
+    "BMS装配": [
+        {"失效模式": "BMS板装配位置偏移", "失效后果": "信号采集异常，BMS通讯故障", "失效原因": "定位工装磨损，装配手法不当", "预防措施": "使用定位治具，首件确认", "探测措施": "视觉系统检测位置，电测验证", "严重度S": 7, "频度O": 2, "探测度D": 2, "AP等级": "高"},
+        {"失效模式": "线束接插件插接不到位", "失效后果": "接触不良，信号中断", "失效原因": "作业人员未插到位，防错缺失", "预防措施": "安装插接防错装置，培训", "探测措施": "自动插拔力检测，功能测试", "严重度S": 8, "频度O": 2, "探测度D": 1, "AP等级": "高"},
+        {"失效模式": "BMS固件烧录错误", "失效后果": "BMS无法正常工作，功能失效", "失效原因": "烧录程序版本错误，烧录工装接触不良", "预防措施": "扫码自动匹配程序，定期维护烧录座", "探测措施": "烧录后自检，功能测试", "严重度S": 9, "频度O": 2, "探测度D": 1, "AP等级": "高"},
+    ],
+    "密封测试": [
+        {"失效模式": "密封胶涂胶不均匀", "失效后果": "防水性能下降，IP等级不达标", "失效原因": "胶阀堵塞，轨迹参数偏差", "预防措施": "每日清洗胶阀，定期校准轨迹", "探测措施": "视觉检测胶宽，气密测试", "严重度S": 7, "频度O": 3, "探测度D": 2, "AP等级": "高"},
+        {"失效模式": "壳体螺丝紧固扭矩不足", "失效后果": "松动漏水，连接失效", "失效原因": "扭矩枪未校准，漏打螺丝", "预防措施": "扭矩枪每日点检，防错计数", "探测措施": "扭矩抽检，气密测试", "严重度S": 6, "频度O": 2, "探测度D": 2, "AP等级": "中"},
+        {"失效模式": "气密测试泄漏", "失效后果": "防水失效，内部器件损坏", "失效原因": "密封圈破损，壳体变形", "预防措施": "来料密封圈检验，壳体尺寸监控", "探测措施": "气密测试仪100%检测，泄漏定位", "严重度S": 8, "频度O": 2, "探测度D": 1, "AP等级": "高"},
+    ],
+    "老化测试": [
+        {"失效模式": "老化过程中通讯中断", "失效后果": "产品功能不稳定，客户投诉", "失效原因": "线束松动，BMS软件bug", "预防措施": "老化前插接确认，软件版本管控", "探测措施": "在线监控通讯状态，报警", "严重度S": 8, "频度O": 2, "探测度D": 2, "AP等级": "高"},
+        {"失效模式": "充放电循环异常", "失效后果": "容量不达标，寿命短", "失效原因": "电芯一致性差，BMS保护参数错误", "预防措施": "电芯分选配组，BMS参数验证", "探测措施": "充放电设备监控，数据记录分析", "严重度S": 9, "频度O": 2, "探测度D": 1, "AP等级": "高"},
+        {"失效模式": "温度监控失效", "失效后果": "过温未保护，热失控风险", "失效原因": "温度传感器故障，线束接触不良", "预防措施": "传感器来料检验，插接防错", "探测措施": "老化过程温度曲线监控，报警", "严重度S": 9, "频度O": 2, "探测度D": 1, "AP等级": "高"},
     ]
 }
 CHARGER_PROCESS_LIB = {
@@ -484,10 +505,25 @@ CHARGER_PROCESS_LIB = {
         {"失效模式": "元器件贴装偏移", "失效后果": "焊接不良，功能失效", "失效原因": "贴片机吸嘴磨损，程序坐标偏差", "预防措施": "定期校准设备，首件验证", "探测措施": "AOI全检，SPI锡膏检测", "严重度S": 7, "频度O": 2, "探测度D": 2, "AP等级": "高"},
         {"失效模式": "立碑", "失效后果": "开路，功能失效", "失效原因": "回流焊温度曲线不当，焊盘设计不合理", "预防措施": "优化炉温曲线，PCB焊盘设计DFM评审", "探测措施": "AOI检测，X-ray抽查", "严重度S": 8, "频度O": 2, "探测度D": 2, "AP等级": "高"},
         {"失效模式": "少锡/锡珠", "失效后果": "虚焊，短路风险", "失效原因": "钢网堵塞，刮刀压力不当", "预防措施": "钢网清洗周期，SPI监控", "探测措施": "SPI全检，AOI复检", "严重度S": 6, "频度O": 3, "探测度D": 1, "AP等级": "中"},
+    ],
+    "插件后焊": [
+        {"失效模式": "插件极性反向", "失效后果": "电路功能异常，烧毁", "失效原因": "作业人员插反，防错缺失", "预防措施": "极性标识清晰，防错工装", "探测措施": "AOI检测，电测验证", "严重度S": 9, "频度O": 2, "探测度D": 1, "AP等级": "高"},
+        {"失效模式": "焊点虚焊/连锡", "失效后果": "功能失效，短路", "失效原因": "烙铁温度不当，助焊剂残留", "预防措施": "定期校准烙铁，作业指导", "探测措施": "AOI检测，ICT测试", "严重度S": 7, "频度O": 3, "探测度D": 2, "AP等级": "高"},
+        {"失效模式": "元件漏插", "失效后果": "功能缺失", "失效原因": "物料漏放，作业疏忽", "预防措施": "物料清单核对，首件确认", "探测措施": "AOI检测，功能测试", "严重度S": 8, "频度O": 2, "探测度D": 1, "AP等级": "高"},
+    ],
+    "功能测试": [
+        {"失效模式": "测试程序未正确加载", "失效后果": "测试结果误判", "失效原因": "程序版本错误，上传失败", "预防措施": "扫码自动匹配程序，版本管控", "探测措施": "自检程序验证", "严重度S": 6, "频度O": 2, "探测度D": 2, "AP等级": "中"},
+        {"失效模式": "测试探针接触不良", "失效后果": "误判为不良品", "失效原因": "探针磨损，氧化", "预防措施": "定期更换探针，清洁", "探测措施": "标准板校验", "严重度S": 5, "频度O": 3, "探测度D": 3, "AP等级": "中"},
+        {"失效模式": "测试参数设置错误", "失效后果": "不良品流出", "失效原因": "操作员误改参数", "预防措施": "权限管理，参数锁定", "探测措施": "首件测试验证", "严重度S": 7, "频度O": 2, "探测度D": 2, "AP等级": "高"},
+    ],
+    "老化测试": [
+        {"失效模式": "老化过程中无输出", "失效后果": "功能失效", "失效原因": "内部元器件损坏，焊接不良", "预防措施": "老化前功能测试，老化架连接确认", "探测措施": "在线监控输出，报警", "严重度S": 8, "频度O": 2, "探测度D": 2, "AP等级": "高"},
+        {"失效模式": "老化温度过高", "失效后果": "器件寿命缩短", "失效原因": "散热风扇故障，环境温度高", "预防措施": "定期维护老化架，温度监控", "探测措施": "温度传感器实时监控，超温报警", "严重度S": 7, "频度O": 2, "探测度D": 1, "AP等级": "高"},
+        {"失效模式": "老化时间不足", "失效后果": "早期失效未暴露", "失效原因": "人为提前下架", "预防措施": "自动计时，防错设计", "探测措施": "系统记录老化时间，超时报警", "严重度S": 6, "频度O": 2, "探测度D": 2, "AP等级": "中"},
     ]
 }
 
-# ------------------------- AI 生成函数 -------------------------
+# ------------------------- AI 生成函数（增强版，确保能连通）-------------------------
 def create_retry_session():
     session = requests.Session()
     retry = Retry(total=3, backoff_factor=1, status_forcelist=[429,500,502,503,504])
@@ -498,31 +534,54 @@ def create_retry_session():
 def generate_pfmea_ai(process_name, product_type, scheme_count=3):
     """调用豆包API生成多组PFMEA方案，返回列表格式： [{"方案名称":..., "pfmea_list":[...]}, ...]"""
     API_KEY = "7abbafd6-4d6e-4dad-9172-ea2d165c7a44"
+    # 尝试多个端点
     API_ENDPOINTS = [
         "https://api.doubao.com/v1/chat/completions",
         "https://api.doubaoai.com/v1/chat/completions",
         "https://open.doubao.com/v1/chat/completions"
     ]
+    # 尝试多个模型名称
+    MODELS = ["doubao-pro-32k", "ep-20240805194357-jzrql", "doubao-lite-32k"]
     session = create_retry_session()
     headers = {"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"}
     prompt = f"""
     你是专业的汽车电子行业PFMEA工程师，精通AIAG-VDA FMEA标准。
-    针对【{process_name}】工序，生成{scheme_count}组完全不同的PFMEA方案。
+    针对【{process_name}】工序（产品类型：{product_type}），生成{scheme_count}组完全不同的PFMEA方案。
     每组方案包含3-5条失效模式，必须涵盖不同维度（人、机、料、法、环），确保内容差异化。
     返回严格的JSON格式：[{{"方案名称":"方案1：...","pfmea_list":[{{"失效模式":"...","失效后果":"...","失效原因":"...","预防措施":"...","探测措施":"...","严重度S":x,"频度O":x,"探测度D":x,"AP等级":"x"}}]}}]
     只返回JSON，不要其他文字。
     """
-    data = {"model": "doubao-pro-32k", "messages": [{"role": "user", "content": prompt}], "temperature": 0.8}
+    last_error = None
     for endpoint in API_ENDPOINTS:
-        try:
-            response = session.post(endpoint, headers=headers, json=data, timeout=60)
-            response.raise_for_status()
-            content = response.json()["choices"][0]["message"]["content"]
-            content = re.sub(r'^```json\s*|\s*```$', '', content.strip())
-            return json.loads(content), None
-        except Exception as e:
-            continue
-    return None, "所有API端点均失败"
+        for model in MODELS:
+            data = {
+                "model": model,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.8,
+                "max_tokens": 4000
+            }
+            try:
+                response = session.post(endpoint, headers=headers, json=data, timeout=90)
+                response.raise_for_status()
+                result = response.json()
+                if "choices" not in result or not result["choices"]:
+                    continue
+                content = result["choices"][0]["message"]["content"]
+                # 清理可能的 markdown 代码块
+                content = re.sub(r'^```json\s*|\s*```$', '', content.strip())
+                parsed = json.loads(content)
+                # 验证格式
+                if isinstance(parsed, list) and all("pfmea_list" in s for s in parsed):
+                    return parsed, None
+                else:
+                    last_error = f"返回格式不正确: {content[:200]}"
+            except json.JSONDecodeError as e:
+                last_error = f"JSON解析失败: {e}\n原始内容: {content[:200] if 'content' in locals() else '无'}"
+                continue
+            except Exception as e:
+                last_error = str(e)
+                continue
+    return None, f"所有API端点均失败，最后错误: {last_error}"
 
 # ------------------------- 知识库管理函数 -------------------------
 def parse_pfmea_excel(file_bytes):
@@ -756,11 +815,22 @@ def pfmea_tool():
         scheme_count = st.slider("AI生成方案数量", 2, 5, 3)
         mix_knowledge = st.checkbox("混合知识库内容作为独立方案", value=True, help="勾选后，知识库中该工序的内容将作为一个额外方案供选择")
 
+    # 测试AI连接按钮
+    if st.button("🔌 测试AI连接", use_container_width=True):
+        with st.spinner("正在测试AI连接..."):
+            test_result, err = generate_pfmea_ai("电芯来料检验", "电池包", 1)
+            if test_result:
+                st.success("AI连接正常，可以生成PFMEA方案！")
+            else:
+                st.error(f"AI连接失败: {err}")
+
     # ---------- 生成按钮 ----------
     if st.button("🚀 生成PFMEA方案", type="primary", use_container_width=True) and selected_processes:
         st.session_state.generated_pfmea_data = {}
         st.session_state.selected_ai_scheme = {}
-        for proc in selected_processes:
+        progress_bar = st.progress(0)
+        for idx, proc in enumerate(selected_processes):
+            progress_bar.progress((idx) / len(selected_processes))
             if gen_mode == "本地标准库（含知识库）":
                 # 合并标准库和知识库
                 lib_items = process_lib.get(proc, [])
@@ -776,13 +846,21 @@ def pfmea_tool():
                     schemes, err = generate_pfmea_ai(proc, product_type, scheme_count)
                     if err:
                         st.error(f"{proc} AI生成失败: {err}")
-                        continue
-                    # 如果需要混合知识库
-                    if mix_knowledge and proc in st.session_state.user_knowledge_base:
-                        kb_scheme = {"方案名称": "📁 我的知识库方案", "pfmea_list": st.session_state.user_knowledge_base[proc]}
-                        schemes.append(kb_scheme)
-                    st.session_state.generated_pfmea_data[proc] = schemes
-                    st.session_state.selected_ai_scheme[proc] = 0  # 默认选中第一个方案
+                        # 如果失败，可以尝试用本地库作为备用
+                        lib_items = process_lib.get(proc, [])
+                        if lib_items:
+                            st.warning(f"已使用本地库作为备用方案")
+                            st.session_state.generated_pfmea_data[proc] = [{"方案名称": "本地库备用方案", "pfmea_list": lib_items}]
+                        else:
+                            continue
+                    else:
+                        # 如果需要混合知识库
+                        if mix_knowledge and proc in st.session_state.user_knowledge_base:
+                            kb_scheme = {"方案名称": "📁 我的知识库方案", "pfmea_list": st.session_state.user_knowledge_base[proc]}
+                            schemes.append(kb_scheme)
+                        st.session_state.generated_pfmea_data[proc] = schemes
+                        st.session_state.selected_ai_scheme[proc] = 0  # 默认选中第一个方案
+        progress_bar.progress(1.0)
         if st.session_state.generated_pfmea_data:
             st.success("生成完成！请选择方案")
             st.rerun()
