@@ -8,7 +8,7 @@ import re
 import time
 import hashlib
 import base64
-from datetime import datetime
+from datetime import datetime, timedelta
 from urllib3.util.retry import Retry
 from requests.adapters import HTTPAdapter
 from PIL import Image as PILImage
@@ -26,6 +26,52 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
+# 淡绿色主题CSS
+st.markdown("""
+<style>
+    /* 全局背景 */
+    .stApp {
+        background-color: #f5f9f0;
+    }
+    /* 卡片样式 */
+    .card {
+        background-color: white;
+        border-radius: 12px;
+        padding: 20px;
+        margin-bottom: 20px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+        border: 1px solid #d9e8c5;
+    }
+    /* 按钮样式 */
+    .stButton button {
+        background-color: #7fb77e;
+        color: white;
+        border-radius: 8px;
+        border: none;
+        padding: 0.5rem 1rem;
+        font-weight: 500;
+    }
+    .stButton button:hover {
+        background-color: #6ca06b;
+        color: white;
+    }
+    /* 输入框样式 */
+    .stTextInput input, .stTextArea textarea, .stSelectbox div[data-baseweb="select"] {
+        border-radius: 8px;
+        border: 1px solid #cbd5e0;
+    }
+    /* 标题样式 */
+    h1, h2, h3 {
+        color: #3c6e3c;
+    }
+    /* 表格样式 */
+    .dataframe {
+        border-radius: 8px;
+        overflow: hidden;
+    }
+</style>
+""", unsafe_allow_html=True)
+
 # 初始化 session_state
 if "current_page" not in st.session_state:
     st.session_state.current_page = "home"
@@ -35,17 +81,21 @@ if "image_order" not in st.session_state:
     st.session_state.image_order = []           # 模块一图片顺序
 if "uploaded_images" not in st.session_state:
     st.session_state.uploaded_images = []       # 模块一上传的图片文件
+if "user_knowledge_base" not in st.session_state:
+    st.session_state.user_knowledge_base = {}   # 知识库
+if "generated_pfmea_data" not in st.session_state:
+    st.session_state.generated_pfmea_data = {}
+if "selected_ai_scheme" not in st.session_state:
+    st.session_state.selected_ai_scheme = {}    # 存储每个工序选中的方案索引
 
 # ===================== 辅助函数 =====================
 def compress_image_to_limit(image_bytes, max_size_mb=2, max_side=1024):
     """压缩图片到指定大小以下（返回压缩后的 bytes）"""
     img = PILImage.open(io.BytesIO(image_bytes))
-    # 转换为 RGB（避免 PNG 透明通道问题）
     if img.mode in ('RGBA', 'LA', 'P'):
         rgb = PILImage.new('RGB', img.size, (255, 255, 255))
         rgb.paste(img, mask=img.split()[-1] if img.mode == 'RGBA' else None)
         img = rgb
-    # 按比例缩放
     img.thumbnail((max_side, max_side), PILImage.Resampling.LANCZOS)
     output = io.BytesIO()
     quality = 85
@@ -58,68 +108,125 @@ def compress_image_to_limit(image_bytes, max_size_mb=2, max_side=1024):
         quality -= 5
     return output.getvalue()
 
-def send_to_wechat_robot(image_bytes, webhook_url):
-    """发送图片到企业微信群机器人（需先压缩）"""
-    try:
-        # 压缩图片至 2MB 以内
-        compressed = compress_image_to_limit(image_bytes)
-        # 计算 base64 和 md5
-        b64 = base64.b64encode(compressed).decode('utf-8')
-        md5 = hashlib.md5(compressed).hexdigest()
-        payload = {
-            "msgtype": "image",
-            "image": {
-                "base64": b64,
-                "md5": md5
+def send_to_wechat_robot(image_bytes_list, webhook_url, text_content=None):
+    """发送图片（支持多张，企业微信限制一次最多一张，需循环发送）"""
+    success_count = 0
+    for idx, img_bytes in enumerate(image_bytes_list):
+        try:
+            compressed = compress_image_to_limit(img_bytes)
+            b64 = base64.b64encode(compressed).decode('utf-8')
+            md5 = hashlib.md5(compressed).hexdigest()
+            payload = {
+                "msgtype": "image",
+                "image": {
+                    "base64": b64,
+                    "md5": md5
+                }
             }
-        }
-        response = requests.post(webhook_url, json=payload, timeout=10)
-        result = response.json()
-        if result.get("errcode") == 0:
-            return True, "推送成功"
-        else:
-            return False, f"企业微信返回错误: {result}"
-    except Exception as e:
-        return False, str(e)
+            # 如果有文本内容，先发送文本（可选）
+            if text_content and idx == 0:
+                text_payload = {
+                    "msgtype": "text",
+                    "text": {"content": text_content}
+                }
+                requests.post(webhook_url, json=text_payload, timeout=10)
+            response = requests.post(webhook_url, json=payload, timeout=10)
+            result = response.json()
+            if result.get("errcode") == 0:
+                success_count += 1
+            else:
+                print(f"推送图片失败: {result}")
+        except Exception as e:
+            print(f"推送图片异常: {e}")
+    return success_count
 
 def clean_history_limit(history, max_total=200, keep=100):
-    """历史记录清理：超过 max_total 则保留 keep 条"""
     if len(history) > max_total:
         return history[-keep:]
     return history
 
 def reset_df_index(df):
-    """重置 DataFrame 索引为 RangeIndex，避免 data_editor 警告"""
     if not df.empty and not isinstance(df.index, pd.RangeIndex):
         df = df.reset_index(drop=True)
     return df
 
+def export_history_to_excel(history_df):
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        history_df.to_excel(writer, index=False, sheet_name="历史记录")
+    output.seek(0)
+    return output
+
 # ===================== 模块一：Excel 图片工具 =====================
 def excel_image_tool():
+    st.markdown("<div class='card'>", unsafe_allow_html=True)
     st.header("📸 Excel 图片工具")
     st.markdown("将多张图片按顺序插入 Excel 表格指定区域，支持新建或加载现有文件。")
 
-    # 1. 图片上传（支持多选）
+    # 单元格区域设置
+    col1, col2 = st.columns(2)
+    with col1:
+        start_cell = st.text_input("起始单元格 (如 A1)", "A1")
+    with col2:
+        end_cell = st.text_input("结束单元格 (如 C5)", "C5")
+
+    # 计算单元格数量
+    try:
+        start_match = re.match(r'([A-Z]+)(\d+)', start_cell.upper())
+        end_match = re.match(r'([A-Z]+)(\d+)', end_cell.upper())
+        if start_match and end_match:
+            start_col = openpyxl.utils.column_index_from_string(start_match.group(1))
+            start_row = int(start_match.group(2))
+            end_col = openpyxl.utils.column_index_from_string(end_match.group(1))
+            end_row = int(end_match.group(2))
+            rows = end_row - start_row + 1
+            cols = end_col - start_col + 1
+            total_cells = rows * cols
+            st.info(f"区域共 {total_cells} 个单元格（{rows} 行 × {cols} 列）")
+        else:
+            st.warning("单元格格式错误，示例：A1")
+            total_cells = 0
+    except:
+        total_cells = 0
+
+    # 图片上传
     uploaded_files = st.file_uploader(
-        "选择图片（支持 jpg/png/bmp，多选）",
+        "从相册选择图片",
         type=["jpg", "jpeg", "png", "bmp"],
         accept_multiple_files=True,
         key="img_upload"
     )
     if uploaded_files:
-        # 更新 session_state 中的图片列表（保持顺序）
-        current_files = [(f.name, f.getvalue()) for f in uploaded_files]
-        st.session_state.uploaded_images = current_files
-        st.session_state.image_order = list(range(len(current_files)))
-        st.success(f"已上传 {len(current_files)} 张图片")
+        st.session_state.uploaded_images = [(f.name, f.getvalue()) for f in uploaded_files]
+        st.session_state.image_order = list(range(len(st.session_state.uploaded_images)))
+        st.success(f"已上传 {len(st.session_state.uploaded_images)} 张图片")
 
-    # 2. 顺序调整（手动排序）
+    # 顺序调整预览
     if st.session_state.uploaded_images:
-        st.subheader("调整图片顺序（点击上下移动）")
+        st.subheader("图片顺序调整（点击上下移动）")
+        # 显示表格预览
+        if total_cells > 0:
+            st.markdown("**实时预览（按当前顺序从左到右、从上到下填充）**")
+            preview_data = []
+            for r in range(rows):
+                row_cells = []
+                for c in range(cols):
+                    idx = r * cols + c
+                    if idx < len(st.session_state.uploaded_images):
+                        img_idx = st.session_state.image_order[idx]
+                        img_name = st.session_state.uploaded_images[img_idx][0][:8]
+                        row_cells.append(img_name)
+                    else:
+                        row_cells.append("空")
+                preview_data.append(row_cells)
+            preview_df = pd.DataFrame(preview_data, columns=[f"{chr(65+i)}" for i in range(cols)])
+            st.table(preview_df)
+
+        # 上下移动按钮
         for idx, (name, _) in enumerate(st.session_state.uploaded_images):
             col1, col2, col3 = st.columns([3, 1, 1])
             with col1:
-                st.image(io.BytesIO(st.session_state.uploaded_images[idx][1]), width=80, caption=name)
+                st.image(io.BytesIO(st.session_state.uploaded_images[idx][1]), width=60, caption=name)
             with col2:
                 if idx > 0 and st.button("⬆️ 上移", key=f"up_{idx}", width="stretch"):
                     st.session_state.image_order[idx], st.session_state.image_order[idx-1] = \
@@ -131,14 +238,7 @@ def excel_image_tool():
                         st.session_state.image_order[idx+1], st.session_state.image_order[idx]
                     st.rerun()
 
-    # 3. 单元格区域设置
-    col1, col2 = st.columns(2)
-    with col1:
-        start_cell = st.text_input("起始单元格 (如 A1)", "A1")
-    with col2:
-        end_cell = st.text_input("结束单元格 (如 C5)", "C5")
-
-    # 4. 选择 Excel 源（新建或上传现有）
+    # Excel 来源选择
     excel_source = st.radio("Excel 来源", ["新建空白工作簿", "上传现有 Excel 文件"])
     existing_wb = None
     if excel_source == "上传现有 Excel 文件":
@@ -150,64 +250,21 @@ def excel_image_tool():
             except Exception as e:
                 st.error(f"加载失败: {e}")
 
-    # 5. 预览布局（模拟网格）
-    if st.session_state.uploaded_images and start_cell and end_cell:
-        try:
-            start_match = re.match(r'([A-Z]+)(\d+)', start_cell.upper())
-            end_match = re.match(r'([A-Z]+)(\d+)', end_cell.upper())
-            if not start_match or not end_match:
-                st.error("单元格格式错误，示例：A1")
-            else:
-                start_col_letter = start_match.group(1)
-                start_row = int(start_match.group(2))
-                end_col_letter = end_match.group(1)
-                end_row = int(end_match.group(2))
-                start_col = openpyxl.utils.column_index_from_string(start_col_letter)
-                end_col = openpyxl.utils.column_index_from_string(end_col_letter)
-                rows = end_row - start_row + 1
-                cols = end_col - start_col + 1
-                total_cells = rows * cols
-                if total_cells < len(st.session_state.uploaded_images):
-                    st.warning(f"区域共有 {total_cells} 个单元格，但图片数量为 {len(st.session_state.uploaded_images)}，多余图片将不会被插入")
-                # 预览网格
-                st.subheader("📋 预览布局（按当前顺序从左到右、从上到下填充）")
-                preview_html = "<table style='border-collapse: collapse;'>"
-                for r in range(rows):
-                    preview_html += "<tr>"
-                    for c in range(cols):
-                        idx = r * cols + c
-                        if idx < len(st.session_state.uploaded_images):
-                            img_idx = st.session_state.image_order[idx]
-                            img_name = st.session_state.uploaded_images[img_idx][0][:10]
-                            preview_html += f"<td style='border:1px solid #ddd; padding:8px; text-align:center;'><div style='width:80px; height:80px; background:#f0f0f0;'><small>{img_name}</small></div>顶替"
-                        else:
-                            preview_html += "<td style='border:1px solid #ddd; padding:8px; text-align:center;'>空顶替"
-                    preview_html += "²"
-                preview_html += "∧"
-                st.markdown(preview_html, unsafe_allow_html=True)
-        except Exception as e:
-            st.error(f"解析单元格出错: {e}")
-
-    # 6. 生成并下载 Excel
-    if st.button("🚀 生成 Excel 并下载", type="primary", width="stretch"):
+    # 生成下载
+    if st.button("🚀 生成并下载 Excel 文件", type="primary", width="stretch"):
         if not st.session_state.uploaded_images:
             st.error("请先上传图片")
-        elif not start_cell or not end_cell:
-            st.error("请填写起始和结束单元格")
+        elif not start_cell or not end_cell or total_cells == 0:
+            st.error("请填写正确的起始和结束单元格")
         else:
             try:
-                # 解析单元格范围
+                # 解析
                 start_match = re.match(r'([A-Z]+)(\d+)', start_cell.upper())
                 end_match = re.match(r'([A-Z]+)(\d+)', end_cell.upper())
-                if not start_match or not end_match:
-                    st.error("单元格格式错误")
-                    return
-                start_col_letter = start_match.group(1)
+                start_col = openpyxl.utils.column_index_from_string(start_match.group(1))
                 start_row = int(start_match.group(2))
-                end_col_letter = end_match.group(1)
+                end_col = openpyxl.utils.column_index_from_string(end_match.group(1))
                 end_row = int(end_match.group(2))
-                start_col = openpyxl.utils.column_index_from_string(start_col_letter)
-                end_col = openpyxl.utils.column_index_from_string(end_col_letter)
 
                 # 创建工作簿
                 if existing_wb:
@@ -218,30 +275,25 @@ def excel_image_tool():
                     ws = wb.active
                     ws.title = "图片表格"
 
-                # 设置行高列宽（每个单元格 150 像素高，列宽约 15 字符）
-                CELL_HEIGHT = 150
-                CELL_WIDTH = 15
-                for row in range(start_row, end_row + 1):
-                    ws.row_dimensions[row].height = CELL_HEIGHT
-                for col in range(start_col, end_col + 1):
-                    col_letter = get_column_letter(col)
-                    ws.column_dimensions[col_letter].width = CELL_WIDTH
+                # 设置行高列宽
+                for row in range(start_row, end_row+1):
+                    ws.row_dimensions[row].height = 150
+                for col in range(start_col, end_col+1):
+                    ws.column_dimensions[get_column_letter(col)].width = 15
 
-                # 按顺序插入图片
+                # 插入图片
                 idx = 0
-                for r in range(start_row, end_row + 1):
-                    for c in range(start_col, end_col + 1):
+                for r in range(start_row, end_row+1):
+                    for c in range(start_col, end_col+1):
                         if idx >= len(st.session_state.uploaded_images):
                             break
                         img_idx = st.session_state.image_order[idx]
                         img_name, img_bytes = st.session_state.uploaded_images[img_idx]
                         try:
-                            # 打开图片并缩放至单元格大小（保持比例）
                             pil_img = PILImage.open(io.BytesIO(img_bytes))
-                            # 计算缩放比例（单元格内边距 140px）
                             max_w = 140
                             max_h = 140
-                            ratio = min(max_w / pil_img.width, max_h / pil_img.height)
+                            ratio = min(max_w/pil_img.width, max_h/pil_img.height)
                             new_w = int(pil_img.width * ratio)
                             new_h = int(pil_img.height * ratio)
                             resized = pil_img.resize((new_w, new_h), PILImage.Resampling.LANCZOS)
@@ -252,8 +304,6 @@ def excel_image_tool():
                             xl_img = XLImage(temp_buf)
                             xl_img.width = new_w
                             xl_img.height = new_h
-
-                            # 直接锚定到单元格（左上角）
                             cell_coord = f"{get_column_letter(c)}{r}"
                             ws.add_image(xl_img, cell_coord)
                         except Exception as e:
@@ -262,7 +312,6 @@ def excel_image_tool():
                     if idx >= len(st.session_state.uploaded_images):
                         break
 
-                # 保存到内存
                 output = io.BytesIO()
                 wb.save(output)
                 output.seek(0)
@@ -277,73 +326,121 @@ def excel_image_tool():
             except Exception as e:
                 st.error(f"生成失败: {e}")
 
+    st.markdown("</div>", unsafe_allow_html=True)
+
 # ===================== 模块二：信息推送工具 =====================
 def image_push_tool():
-    st.header("📸 信息推送工具")
-    st.markdown("拍照或选择图片，压缩后推送到企业微信群")
+    st.markdown("<div class='card'>", unsafe_allow_html=True)
+    st.header("📱 信息推送工具")
+    st.markdown("填写检测信息，拍照/选图推送至企业微信群")
 
-    # 企业微信机器人地址（固定）
     WEBHOOK_URL = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=bdf3c7d5-a7fd-4d5a-92bb-4ab15a32e042"
 
-    # 图片获取方式
-    col_cam, col_album = st.columns(2)
-    with col_cam:
-        camera_image = st.camera_input("📷 拍照上传", key="camera")
-    with col_album:
-        album_image = st.file_uploader("🖼️ 从相册选择", type=["jpg", "jpeg", "png", "bmp"], key="album")
+    # 表单
+    with st.form("push_form"):
+        col1, col2 = st.columns(2)
+        with col1:
+            model = st.text_input("型号 *", placeholder="请输入产品型号")
+            line = st.text_input("线体 *", placeholder="请输入生产线体")
+        with col2:
+            detection_date = st.date_input("检测日期", value=datetime.now().date())
+            inspector = st.text_input("检测人", placeholder="姓名")
 
-    image_data = None
-    if camera_image:
-        image_data = camera_image.getvalue()
-    elif album_image:
-        image_data = album_image.getvalue()
+        detection_desc = st.text_area("检测情况 *", placeholder="请详细描述检测情况...", height=100)
+        remark = st.text_area("备注（选填）", placeholder="补充说明", height=60)
 
-    if image_data:
-        # 显示原图大小
-        st.image(io.BytesIO(image_data), caption="待推送图片", width=200)
-        orig_size = len(image_data) / 1024
-        st.info(f"原图大小: {orig_size:.2f} KB")
+        st.markdown("**检测图片（可多选，最多2张）**")
+        images = st.file_uploader("点击拍照 / 从相册选择", type=["jpg", "jpeg", "png", "bmp"], accept_multiple_files=True, key="push_images")
+        if images and len(images) > 2:
+            st.warning("最多选择2张图片，已自动限制")
+            images = images[:2]
 
-        if st.button("📤 推送至企业微信", type="primary", width="stretch"):
-            with st.spinner("正在压缩并推送..."):
-                success, msg = send_to_wechat_robot(image_data, WEBHOOK_URL)
-                if success:
+        submitted = st.form_submit_button("📤 提交并推送至企业微信", type="primary", use_container_width=True)
+
+        if submitted:
+            if not model or not line or not detection_desc:
+                st.error("请填写带 * 的必填项")
+            else:
+                # 构建文本消息
+                text_content = f"【检测报告】\n型号: {model}\n线体: {line}\n检测日期: {detection_date}\n检测人: {inspector}\n检测情况: {detection_desc}\n备注: {remark}"
+                # 推送图片
+                image_bytes_list = [img.getvalue() for img in images] if images else []
+                success_cnt = send_to_wechat_robot(image_bytes_list, WEBHOOK_URL, text_content)
+                if success_cnt == len(image_bytes_list):
                     st.success("推送成功！")
-                    st.session_state.push_history.append({
-                        "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        "status": "成功",
-                        "size": orig_size
-                    })
+                    # 保存历史
+                    record = {
+                        "时间": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "型号": model,
+                        "线体": line,
+                        "检测日期": detection_date.strftime("%Y-%m-%d"),
+                        "检测人": inspector,
+                        "检测情况": detection_desc,
+                        "备注": remark,
+                        "图片数量": len(image_bytes_list),
+                        "推送结果": "成功"
+                    }
+                    st.session_state.push_history.append(record)
+                    st.session_state.push_history = clean_history_limit(st.session_state.push_history)
                 else:
-                    st.error(f"推送失败: {msg}")
-                    st.session_state.push_history.append({
-                        "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        "status": "失败",
-                        "size": orig_size,
-                        "error": msg
-                    })
-                # 清理历史记录（超过200条则保留100条）
-                st.session_state.push_history = clean_history_limit(
-                    st.session_state.push_history, max_total=200, keep=100
-                )
+                    st.error(f"推送失败（成功{success_cnt}/{len(image_bytes_list)}张）")
+                    record = {
+                        "时间": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "型号": model,
+                        "线体": line,
+                        "检测日期": detection_date.strftime("%Y-%m-%d"),
+                        "检测人": inspector,
+                        "检测情况": detection_desc,
+                        "备注": remark,
+                        "图片数量": len(image_bytes_list),
+                        "推送结果": "失败"
+                    }
+                    st.session_state.push_history.append(record)
                 st.rerun()
 
-    # 显示推送历史
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    # 历史记录管理
+    st.markdown("<div class='card'>", unsafe_allow_html=True)
+    st.subheader("📜 历史填报记录")
     if st.session_state.push_history:
-        with st.expander("📜 推送历史记录", expanded=False):
-            df_history = pd.DataFrame(st.session_state.push_history)
-            # 重置索引避免警告
-            df_history = reset_df_index(df_history)
-            st.dataframe(df_history, use_container_width=True)
-            if st.button("🧹 清空历史记录", width="stretch"):
-                st.session_state.push_history = []
-                st.rerun()
+        df_history = pd.DataFrame(st.session_state.push_history)
+
+        # 时间筛选
+        col1, col2 = st.columns(2)
+        with col1:
+            start_date = st.date_input("起始日期", value=datetime.now().date() - timedelta(days=30))
+        with col2:
+            end_date = st.date_input("结束日期", value=datetime.now().date())
+        if start_date <= end_date:
+            df_history['时间日期'] = pd.to_datetime(df_history['时间']).dt.date
+            mask = (df_history['时间日期'] >= start_date) & (df_history['时间日期'] <= end_date)
+            filtered_df = df_history.loc[mask].drop(columns=['时间日期'])
+        else:
+            filtered_df = df_history
+            st.error("起始日期不能大于结束日期")
+
+        st.dataframe(filtered_df, use_container_width=True)
+
+        # 导出
+        if st.button("📥 导出当前筛选记录为 Excel", width="stretch"):
+            if not filtered_df.empty:
+                excel_file = export_history_to_excel(filtered_df)
+                st.download_button(
+                    label="点击下载 Excel",
+                    data=excel_file,
+                    file_name=f"推送记录_{start_date}_{end_date}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    width="stretch"
+                )
+            else:
+                st.warning("没有符合条件的记录")
     else:
-        st.info("暂无推送记录")
+        st.info("暂无历史记录")
+    st.markdown("</div>", unsafe_allow_html=True)
 
 # ===================== 模块三：PFMEA 智能生成工具 =====================
 def pfmea_tool():
-    # 核心配置
     API_KEY = "7abbafd6-4d6e-4dad-9172-ea2d165c7a44"
     API_ENDPOINTS = [
         "https://api.doubao.com/v1/chat/completions",
@@ -353,48 +450,34 @@ def pfmea_tool():
     SYSTEM_NAME = "电池包/充电器PFMEA智能生成系统"
     STANDARD = "AIAG-VDA FMEA 第一版 | IATF16949:2016"
 
-    # 本地标准库（简化示例，实际可扩展）
+    # ---------- 本地标准库（每个工序至少3种方案）----------
     BATTERY_PROCESS_LIB = {
         "电芯来料检验": [
-            {
-                "失效模式": "电芯外观尺寸超差",
-                "失效后果": "电芯无法装入模组壳体，导致装配中断",
-                "失效原因": "来料尺寸公差不符合图纸要求",
-                "预防措施": "制定电芯来料检验规范，量具定期校准",
-                "探测措施": "首件全尺寸检验，巡检按AQL抽样",
-                "严重度S": 6,
-                "频度O": 3,
-                "探测度D": 4,
-                "AP等级": "中"
-            }
+            {"失效模式": "电芯外观尺寸超差", "失效后果": "电芯无法装入模组壳体", "失效原因": "来料尺寸公差不符合图纸要求", "预防措施": "制定电芯来料检验规范，量具定期校准", "探测措施": "首件全尺寸检验，巡检按AQL抽样", "严重度S": 6, "频度O": 3, "探测度D": 4, "AP等级": "中"},
+            {"失效模式": "电芯电压/内阻异常", "失效后果": "模组充放电异常，循环寿命衰减", "失效原因": "电芯生产工艺异常，存储环境不达标", "预防措施": "每批次电压内阻全检，温湿度监控", "探测措施": "自动化检测设备100%全检，异常报警隔离", "严重度S": 9, "频度O": 2, "探测度D": 2, "AP等级": "高"},
+            {"失效模式": "电芯表面划伤/破损", "失效后果": "绝缘性能下降，可能引发短路", "失效原因": "来料包装破损，搬运过程中磕碰", "预防措施": "包装标准化，运输防护升级", "探测措施": "目视全检，不良品隔离", "严重度S": 7, "频度O": 3, "探测度D": 3, "AP等级": "高"},
         ],
         "模组堆叠装配": [
-            {
-                "失效模式": "电芯堆叠顺序错误",
-                "失效后果": "模组电路连接错误，严重时短路",
-                "失效原因": "作业人员未按SOP操作",
-                "预防措施": "安装极性视觉防错装置",
-                "探测措施": "视觉设备100%检测",
-                "严重度S": 9,
-                "频度O": 2,
-                "探测度D": 2,
-                "AP等级": "高"
-            }
+            {"失效模式": "电芯堆叠顺序错误", "失效后果": "电路连接错误，短路风险", "失效原因": "作业人员未按SOP操作，防错失效", "预防措施": "安装极性视觉防错装置，培训考核", "探测措施": "视觉设备100%检测，异常停机", "严重度S": 9, "频度O": 2, "探测度D": 2, "AP等级": "高"},
+            {"失效模式": "电芯之间间距不均", "失效后果": "散热不均，影响寿命", "失效原因": "堆叠工装磨损，定位不准", "预防措施": "定期校准工装，首件确认", "探测措施": "激光测距抽检", "严重度S": 5, "频度O": 3, "探测度D": 3, "AP等级": "中"},
+            {"失效模式": "绝缘片漏装/错装", "失效后果": "短路风险，严重时起火", "失效原因": "物料清单错误，作业疏忽", "预防措施": "物料扫码防错，双人复核", "探测措施": "视觉系统检测绝缘片有无", "严重度S": 9, "频度O": 2, "探测度D": 1, "AP等级": "高"},
+        ],
+        "激光焊接": [
+            {"失效模式": "焊接熔深不足", "失效后果": "连接强度不足，虚焊导致断路", "失效原因": "激光功率不稳定，焦距偏移", "预防措施": "每日焊接参数验证，设备定期维护", "探测措施": "焊接后拉力测试，在线监控", "严重度S": 8, "频度O": 2, "探测度D": 2, "AP等级": "高"},
+            {"失效模式": "焊接飞溅", "失效后果": "污染其他部件，可能引起短路", "失效原因": "保护气体流量不足，板材表面脏污", "预防措施": "清洁板材，优化焊接参数", "探测措施": "目视检查，飞溅残留检测", "严重度S": 6, "频度O": 3, "探测度D": 3, "AP等级": "中"},
+            {"失效模式": "焊接位置偏移", "失效后果": "焊接区域未对准，强度不足", "失效原因": "定位夹具松动，视觉定位误差", "预防措施": "定期校准夹具，视觉定位自检", "探测措施": "首件全检，过程SPC监控", "严重度S": 7, "频度O": 2, "探测度D": 2, "AP等级": "高"},
         ]
     }
     CHARGER_PROCESS_LIB = {
         "PCB来料检验": [
-            {
-                "失效模式": "PCB板尺寸超差",
-                "失效后果": "PCB无法装入壳体",
-                "失效原因": "PCB生产制程偏差",
-                "预防措施": "制定PCB来料检验规范",
-                "探测措施": "首件全尺寸检验",
-                "严重度S": 5,
-                "频度O": 3,
-                "探测度D": 4,
-                "AP等级": "中"
-            }
+            {"失效模式": "PCB板尺寸超差", "失效后果": "PCB无法装入壳体", "失效原因": "PCB生产制程偏差", "预防措施": "制定PCB来料检验规范，首件全检", "探测措施": "首件全尺寸检验，巡检抽检", "严重度S": 5, "频度O": 3, "探测度D": 4, "AP等级": "中"},
+            {"失效模式": "铜箔起泡", "失效后果": "焊接可靠性下降，虚焊", "失效原因": "PCB受潮，层压工艺不良", "预防措施": "来料烘烤，存储湿度控制", "探测措施": "外观检查，切片分析", "严重度S": 6, "频度O": 2, "探测度D": 3, "AP等级": "中"},
+            {"失效模式": "丝印错误", "失效后果": "元器件贴装错误", "失效原因": "PCB制板厂丝印工序失误", "预防措施": "IQC核对图纸，首件确认", "探测措施": "AOI检测丝印内容", "严重度S": 7, "频度O": 2, "探测度D": 2, "AP等级": "高"},
+        ],
+        "SMT贴片焊接": [
+            {"失效模式": "元器件贴装偏移", "失效后果": "焊接不良，功能失效", "失效原因": "贴片机吸嘴磨损，程序坐标偏差", "预防措施": "定期校准设备，首件验证", "探测措施": "AOI全检，SPI锡膏检测", "严重度S": 7, "频度O": 2, "探测度D": 2, "AP等级": "高"},
+            {"失效模式": "立碑", "失效后果": "开路，功能失效", "失效原因": "回流焊温度曲线不当，焊盘设计不合理", "预防措施": "优化炉温曲线，PCB焊盘设计DFM评审", "探测措施": "AOI检测，X-ray抽查", "严重度S": 8, "频度O": 2, "探测度D": 2, "AP等级": "高"},
+            {"失效模式": "少锡/锡珠", "失效后果": "虚焊，短路风险", "失效原因": "钢网堵塞，刮刀压力不当", "预防措施": "钢网清洗周期，SPI监控", "探测措施": "SPI全检，AOI复检", "严重度S": 6, "频度O": 3, "探测度D": 1, "AP等级": "中"},
         ]
     }
 
@@ -411,7 +494,8 @@ def pfmea_tool():
         prompt = f"""
         你是专业的汽车电子行业PFMEA工程师，精通AIAG-VDA FMEA标准。
         针对【{process_name}】工序，生成{scheme_count}组不同的PFMEA方案。
-        返回严格的JSON格式：[{{"方案名称":"...","pfmea_list":[{{"失效模式":"...","失效后果":"...","失效原因":"...","预防措施":"...","探测措施":"...","严重度S":x,"频度O":x,"探测度D":x,"AP等级":"x"}}]}}]
+        每组方案包含3-5条失效模式，必须涵盖不同维度（人、机、料、法、环）。
+        返回严格的JSON格式：[{{"方案名称":"方案1：...","pfmea_list":[{{"失效模式":"...","失效后果":"...","失效原因":"...","预防措施":"...","探测措施":"...","严重度S":x,"频度O":x,"探测度D":x,"AP等级":"x"}}]}}]
         """
         data = {"model": "doubao-pro-32k", "messages": [{"role": "user", "content": prompt}], "temperature": 0.7}
         for endpoint in API_ENDPOINTS:
@@ -455,85 +539,222 @@ def pfmea_tool():
         output.seek(0)
         return output
 
+    def parse_pfmea_excel(file_bytes):
+        """解析上传的PFMEA Excel文件，返回工序->失效条目字典"""
+        try:
+            df = pd.read_excel(io.BytesIO(file_bytes), engine='openpyxl')
+            # 尝试智能识别列名
+            possible_cols = {
+                "工序": ["工序", "过程步骤", "工序名称", "过程"],
+                "失效模式": ["失效模式", "潜在失效模式"],
+                "失效后果": ["失效后果", "潜在影响", "失效影响"],
+                "失效原因": ["失效原因", "潜在原因", "失效起因"],
+                "预防措施": ["预防措施", "预防控制"],
+                "探测措施": ["探测措施", "探测控制"],
+                "严重度S": ["严重度S", "严重度", "S"],
+                "频度O": ["频度O", "频度", "O"],
+                "探测度D": ["探测度D", "探测度", "D"],
+                "AP等级": ["AP等级", "AP", "优先级"]
+            }
+            col_mapping = {}
+            for target, candidates in possible_cols.items():
+                for col in df.columns:
+                    if any(c in col for c in candidates):
+                        col_mapping[target] = col
+                        break
+            if "工序" not in col_mapping:
+                st.error("Excel中未找到工序列")
+                return {}
+            # 按工序分组
+            knowledge = {}
+            for _, row in df.iterrows():
+                process = str(row[col_mapping["工序"]]).strip()
+                if not process or process == "nan":
+                    continue
+                item = {}
+                for target, col in col_mapping.items():
+                    if target != "工序":
+                        item[target] = row[col] if pd.notna(row[col]) else ""
+                # 确保S/O/D为整数
+                for score in ["严重度S", "频度O", "探测度D"]:
+                    if score in item:
+                        try:
+                            item[score] = int(float(item[score]))
+                        except:
+                            item[score] = 5
+                if "AP等级" not in item:
+                    # 自动计算
+                    s = item.get("严重度S", 5)
+                    o = item.get("频度O", 3)
+                    d = item.get("探测度D", 4)
+                    # 简单计算逻辑
+                    if s >= 9 or (s >= 7 and (o >= 4 or d >= 8)):
+                        ap = "高"
+                    elif s <= 4 and o <= 6:
+                        ap = "低"
+                    else:
+                        ap = "中"
+                    item["AP等级"] = ap
+                if process not in knowledge:
+                    knowledge[process] = []
+                knowledge[process].append(item)
+            return knowledge
+        except Exception as e:
+            st.error(f"解析Excel失败: {e}")
+            return {}
+
+    # ---------- 界面 ----------
+    st.markdown("<div class='card'>", unsafe_allow_html=True)
     st.title(SYSTEM_NAME)
     st.caption(STANDARD)
 
-    # 产品类型和工序选择
+    # 产品类型
     product_type = st.radio("产品类型", ["电池包", "充电器"])
+
+    # 工序选择（多选+自定义）
     process_lib = BATTERY_PROCESS_LIB if product_type == "电池包" else CHARGER_PROCESS_LIB
-    selected_processes = st.multiselect("选择工序", list(process_lib.keys()), default=list(process_lib.keys())[:1])
+    all_process = list(process_lib.keys())
+    # 合并知识库中的工序
+    if st.session_state.user_knowledge_base:
+        all_process = list(set(all_process + list(st.session_state.user_knowledge_base.keys())))
+    all_process.sort()
+
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        selected_processes = st.multiselect("选择工序（可多选）", all_process, default=all_process[:2] if all_process else [])
+    with col2:
+        custom_process = st.text_input("自定义工序名称")
+        if st.button("➕ 添加自定义工序", width="stretch"):
+            if custom_process and custom_process not in selected_processes:
+                selected_processes.append(custom_process)
+                st.success(f"已添加工序：{custom_process}")
+                st.rerun()
+
+    # 导入知识库文件
+    uploaded_kb = st.file_uploader("导入已有 PFMEA Excel 文件（.xlsx）", type=["xlsx"], key="kb_upload")
+    if uploaded_kb:
+        with st.spinner("解析中..."):
+            kb_data = parse_pfmea_excel(uploaded_kb.getvalue())
+            if kb_data:
+                for proc, items in kb_data.items():
+                    if proc in st.session_state.user_knowledge_base:
+                        st.session_state.user_knowledge_base[proc].extend(items)
+                    else:
+                        st.session_state.user_knowledge_base[proc] = items
+                st.success(f"成功导入 {len(kb_data)} 个工序的知识库条目！")
+                st.rerun()
 
     # 生成模式
-    gen_mode = st.radio("生成模式", ["本地标准库", "AI智能生成"])
-    scheme_count = 3
-    if gen_mode == "AI智能生成":
-        scheme_count = st.slider("方案数量", 2, 5, 3)
+    gen_mode = st.radio("生成模式", ["本地标准库", "AI智能生成"], horizontal=True)
 
-    if st.button("🚀 生成PFMEA", type="primary", width="stretch") and selected_processes:
-        pfmea_data = {}
+    if st.button("🚀 生成PFMEA方案", type="primary", width="stretch") and selected_processes:
+        st.session_state.generated_pfmea_data = {}
+        st.session_state.selected_ai_scheme = {}
         for proc in selected_processes:
             if gen_mode == "本地标准库":
-                pfmea_data[proc] = process_lib.get(proc, [])
+                # 从本地库获取（如果用户知识库有，优先合并）
+                lib_items = process_lib.get(proc, [])
+                user_items = st.session_state.user_knowledge_base.get(proc, [])
+                combined = lib_items + user_items
+                if not combined:
+                    st.warning(f"工序【{proc}】无本地数据，请使用AI生成")
+                    continue
+                # 展示所有方案供选择（简化：直接使用所有条目）
+                st.session_state.generated_pfmea_data[proc] = combined
             else:
-                with st.spinner(f"AI生成 {proc} ..."):
-                    schemes, err = generate_pfmea_ai(proc, product_type, scheme_count)
+                with st.spinner(f"AI正在生成【{proc}】的方案..."):
+                    schemes, err = generate_pfmea_ai(proc, product_type, scheme_count=3)
                     if err:
-                        st.error(f"{proc} 生成失败: {err}")
-                        pfmea_data[proc] = []
-                    else:
-                        pfmea_data[proc] = schemes[0]["pfmea_list"] if schemes else []
-        if pfmea_data:
-            st.success("生成完成")
-            # 可编辑预览
-            all_rows = []
-            for p, items in pfmea_data.items():
-                for item in items:
-                    all_rows.append({"工序": p, **item})
-            if all_rows:
-                df = pd.DataFrame(all_rows)
-                df = reset_df_index(df)  # 避免 data_editor 索引警告
-                edited = st.data_editor(df, use_container_width=True, num_rows="dynamic", hide_index=True)
-                # 重新组装
-                updated = {}
-                for _, row in edited.iterrows():
-                    p = row["工序"]
-                    if p not in updated:
-                        updated[p] = []
-                    item = {k:v for k,v in row.items() if k != "工序"}
-                    updated[p].append(item)
-                pfmea_data = updated
-                # 导出
-                excel_file = export_pfmea_excel(pfmea_data, product_type)
-                st.download_button(
-                    label="📥 下载PFMEA Excel",
-                    data=excel_file,
-                    file_name=f"{product_type}_PFMEA_{datetime.now().strftime('%Y%m%d%H%M%S')}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    width="stretch"
-                )
+                        st.error(f"{proc} AI生成失败: {err}")
+                        continue
+                    # 存储方案供选择
+                    st.session_state.generated_pfmea_data[proc] = schemes
+                    st.session_state.selected_ai_scheme[proc] = 0  # 默认选中第一个方案
+        if st.session_state.generated_pfmea_data:
+            st.success("生成完成！请选择方案")
+            st.rerun()
+
+    # 方案选择与预览
+    if st.session_state.generated_pfmea_data:
+        st.markdown("### 选择最终方案")
+        final_data = {}
+        for proc in selected_processes:
+            if proc not in st.session_state.generated_pfmea_data:
+                continue
+            data = st.session_state.generated_pfmea_data[proc]
+            if gen_mode == "本地标准库":
+                # 本地库直接展示所有条目（可编辑）
+                with st.expander(f"工序：{proc}"):
+                    df_proc = pd.DataFrame(data)
+                    df_proc = reset_df_index(df_proc)
+                    edited = st.data_editor(df_proc, use_container_width=True, num_rows="dynamic", hide_index=True, key=f"edit_{proc}")
+                    final_data[proc] = edited.to_dict("records")
+            else:
+                # AI模式，显示方案卡片
+                schemes = data
+                scheme_names = [s["方案名称"] for s in schemes]
+                selected_idx = st.radio(f"为【{proc}】选择方案", options=range(len(scheme_names)), format_func=lambda i: scheme_names[i], key=f"select_{proc}", index=st.session_state.selected_ai_scheme.get(proc, 0))
+                st.session_state.selected_ai_scheme[proc] = selected_idx
+                selected_scheme = schemes[selected_idx]
+                st.markdown("**方案预览**")
+                df_scheme = pd.DataFrame(selected_scheme["pfmea_list"])
+                st.dataframe(df_scheme, use_container_width=True)
+                # 允许编辑
+                edited_df = st.data_editor(df_scheme, use_container_width=True, num_rows="dynamic", hide_index=True, key=f"edit_ai_{proc}")
+                final_data[proc] = edited_df.to_dict("records")
+
+        # 确认生成最终Excel
+        if st.button("✅ 确认使用当前方案，导出Excel", type="primary", width="stretch"):
+            excel_file = export_pfmea_excel(final_data, product_type)
+            st.download_button(
+                label="📥 下载 PFMEA Excel 文件",
+                data=excel_file,
+                file_name=f"{product_type}_PFMEA_{datetime.now().strftime('%Y%m%d%H%M%S')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                width="stretch"
+            )
+
+    st.markdown("</div>", unsafe_allow_html=True)
 
 # ===================== 主界面 =====================
 def main():
-    # 首页显示三个卡片按钮
+    # 首页三个模块按钮
     if st.session_state.current_page == "home":
-        st.title("🛠️ 多功能智能工具集")
-        st.markdown("请选择要使用的工具模块：")
+        st.markdown("<div style='text-align: center; padding: 2rem 0;'><h1>🛠️ 多功能智能工具集</h1><p>请选择要使用的工具模块</p></div>", unsafe_allow_html=True)
         col1, col2, col3 = st.columns(3)
 
         with col1:
-            if st.button("📸 Excel 图片工具\n\n将多张图片按顺序插入 Excel 表格", width="stretch"):
-                st.session_state.current_page = "excel_image"
-                st.rerun()
+            with st.container():
+                st.markdown("<div class='card' style='text-align: center;'>", unsafe_allow_html=True)
+                st.image("https://img.icons8.com/fluency/96/000000/microsoft-excel-2019.png", width=60)
+                st.subheader("Excel 图片工具")
+                st.markdown("将多张图片按顺序插入 Excel 表格")
+                if st.button("进入工具", key="btn_excel", width="stretch"):
+                    st.session_state.current_page = "excel_image"
+                    st.rerun()
+                st.markdown("</div>", unsafe_allow_html=True)
 
         with col2:
-            if st.button("📱 信息推送工具\n\n拍照/选图推送至企业微信群", width="stretch"):
-                st.session_state.current_page = "image_push"
-                st.rerun()
+            with st.container():
+                st.markdown("<div class='card' style='text-align: center;'>", unsafe_allow_html=True)
+                st.image("https://img.icons8.com/fluency/96/000000/wechat.png", width=60)
+                st.subheader("信息推送工具")
+                st.markdown("拍照/选图推送至企业微信群")
+                if st.button("进入工具", key="btn_push", width="stretch"):
+                    st.session_state.current_page = "image_push"
+                    st.rerun()
+                st.markdown("</div>", unsafe_allow_html=True)
 
         with col3:
-            if st.button("⚡ PFMEA 智能生成工具\n\n符合 AIAG-VDA 标准的 FMEA 生成", width="stretch"):
-                st.session_state.current_page = "pfmea"
-                st.rerun()
+            with st.container():
+                st.markdown("<div class='card' style='text-align: center;'>", unsafe_allow_html=True)
+                st.image("https://img.icons8.com/fluency/96/000000/quality.png", width=60)
+                st.subheader("PFMEA 智能生成")
+                st.markdown("符合 AIAG-VDA 标准的 FMEA 生成")
+                if st.button("进入工具", key="btn_pfmea", width="stretch"):
+                    st.session_state.current_page = "pfmea"
+                    st.rerun()
+                st.markdown("</div>", unsafe_allow_html=True)
 
     # 模块页面
     elif st.session_state.current_page == "excel_image":
@@ -541,13 +762,11 @@ def main():
         if st.button("🏠 返回首页", width="stretch"):
             st.session_state.current_page = "home"
             st.rerun()
-
     elif st.session_state.current_page == "image_push":
         image_push_tool()
         if st.button("🏠 返回首页", width="stretch"):
             st.session_state.current_page = "home"
             st.rerun()
-
     elif st.session_state.current_page == "pfmea":
         pfmea_tool()
         if st.button("🏠 返回首页", width="stretch"):
