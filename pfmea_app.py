@@ -17,7 +17,6 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.drawing.image import Image as XLImage
 from openpyxl.utils import get_column_letter
 from openpyxl.styles import Font, Alignment, Border, Side
-from openpyxl.drawing.spreadsheet_drawing import Anchor
 
 # ===================== 全局配置 =====================
 st.set_page_config(
@@ -89,6 +88,12 @@ def clean_history_limit(history, max_total=200, keep=100):
         return history[-keep:]
     return history
 
+def reset_df_index(df):
+    """重置 DataFrame 索引为 RangeIndex，避免 data_editor 警告"""
+    if not df.empty and not isinstance(df.index, pd.RangeIndex):
+        df = df.reset_index(drop=True)
+    return df
+
 # ===================== 模块一：Excel 图片工具 =====================
 def excel_image_tool():
     st.header("📸 Excel 图片工具")
@@ -111,17 +116,17 @@ def excel_image_tool():
     # 2. 顺序调整（手动排序）
     if st.session_state.uploaded_images:
         st.subheader("调整图片顺序（点击上下移动）")
-        cols_order = st.columns([3, 1, 1])
         for idx, (name, _) in enumerate(st.session_state.uploaded_images):
-            with cols_order[0]:
+            col1, col2, col3 = st.columns([3, 1, 1])
+            with col1:
                 st.image(io.BytesIO(st.session_state.uploaded_images[idx][1]), width=80, caption=name)
-            with cols_order[1]:
-                if idx > 0 and st.button("⬆️ 上移", key=f"up_{idx}"):
+            with col2:
+                if idx > 0 and st.button("⬆️ 上移", key=f"up_{idx}", width="stretch"):
                     st.session_state.image_order[idx], st.session_state.image_order[idx-1] = \
                         st.session_state.image_order[idx-1], st.session_state.image_order[idx]
                     st.rerun()
-            with cols_order[2]:
-                if idx < len(st.session_state.image_order)-1 and st.button("⬇️ 下移", key=f"down_{idx}"):
+            with col3:
+                if idx < len(st.session_state.image_order)-1 and st.button("⬇️ 下移", key=f"down_{idx}", width="stretch"):
                     st.session_state.image_order[idx], st.session_state.image_order[idx+1] = \
                         st.session_state.image_order[idx+1], st.session_state.image_order[idx]
                     st.rerun()
@@ -147,7 +152,6 @@ def excel_image_tool():
 
     # 5. 预览布局（模拟网格）
     if st.session_state.uploaded_images and start_cell and end_cell:
-        # 解析单元格范围
         try:
             start_match = re.match(r'([A-Z]+)(\d+)', start_cell.upper())
             end_match = re.match(r'([A-Z]+)(\d+)', end_cell.upper())
@@ -175,17 +179,17 @@ def excel_image_tool():
                         if idx < len(st.session_state.uploaded_images):
                             img_idx = st.session_state.image_order[idx]
                             img_name = st.session_state.uploaded_images[img_idx][0][:10]
-                            preview_html += f"<td style='border:1px solid #ddd; padding:8px; text-align:center;'><div style='width:80px; height:80px; background:#f0f0f0;'><small>{img_name}</small></div></td>"
+                            preview_html += f"<td style='border:1px solid #ddd; padding:8px; text-align:center;'><div style='width:80px; height:80px; background:#f0f0f0;'><small>{img_name}</small></div>顶替"
                         else:
-                            preview_html += "<td style='border:1px solid #ddd; padding:8px; text-align:center;'>空</td>"
-                    preview_html += "</tr>"
-                preview_html += "</table>"
+                            preview_html += "<td style='border:1px solid #ddd; padding:8px; text-align:center;'>空顶替"
+                    preview_html += "²"
+                preview_html += "∧"
                 st.markdown(preview_html, unsafe_allow_html=True)
         except Exception as e:
             st.error(f"解析单元格出错: {e}")
 
     # 6. 生成并下载 Excel
-    if st.button("🚀 生成 Excel 并下载", type="primary", use_container_width=True):
+    if st.button("🚀 生成 Excel 并下载", type="primary", width="stretch"):
         if not st.session_state.uploaded_images:
             st.error("请先上传图片")
         elif not start_cell or not end_cell:
@@ -234,8 +238,8 @@ def excel_image_tool():
                         try:
                             # 打开图片并缩放至单元格大小（保持比例）
                             pil_img = PILImage.open(io.BytesIO(img_bytes))
-                            # 计算缩放比例
-                            max_w = 140  # 单元格内边距
+                            # 计算缩放比例（单元格内边距 140px）
+                            max_w = 140
                             max_h = 140
                             ratio = min(max_w / pil_img.width, max_h / pil_img.height)
                             new_w = int(pil_img.width * ratio)
@@ -248,15 +252,10 @@ def excel_image_tool():
                             xl_img = XLImage(temp_buf)
                             xl_img.width = new_w
                             xl_img.height = new_h
-                            # 计算锚点（单元格左上角偏移居中）
-                            cell_x = (max_w - new_w) / 2
-                            cell_y = (max_h - new_h) / 2
-                            anchor = Anchor(
-                                colFrom=c-1, rowFrom=r-1,
-                                colTo=c, rowTo=r
-                            )
-                            xl_img.anchor = anchor
-                            ws.add_image(xl_img)
+
+                            # 直接锚定到单元格（左上角）
+                            cell_coord = f"{get_column_letter(c)}{r}"
+                            ws.add_image(xl_img, cell_coord)
                         except Exception as e:
                             st.warning(f"插入图片 {img_name} 失败: {e}")
                         idx += 1
@@ -272,7 +271,7 @@ def excel_image_tool():
                     data=output,
                     file_name=f"图片表格_{datetime.now().strftime('%Y%m%d%H%M%S')}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    use_container_width=True
+                    width="stretch"
                 )
                 st.success("Excel 生成完成！")
             except Exception as e:
@@ -305,12 +304,11 @@ def image_push_tool():
         orig_size = len(image_data) / 1024
         st.info(f"原图大小: {orig_size:.2f} KB")
 
-        if st.button("📤 推送至企业微信", type="primary", use_container_width=True):
+        if st.button("📤 推送至企业微信", type="primary", width="stretch"):
             with st.spinner("正在压缩并推送..."):
                 success, msg = send_to_wechat_robot(image_data, WEBHOOK_URL)
                 if success:
                     st.success("推送成功！")
-                    # 记录历史
                     st.session_state.push_history.append({
                         "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                         "status": "成功",
@@ -334,16 +332,16 @@ def image_push_tool():
     if st.session_state.push_history:
         with st.expander("📜 推送历史记录", expanded=False):
             df_history = pd.DataFrame(st.session_state.push_history)
+            # 重置索引避免警告
+            df_history = reset_df_index(df_history)
             st.dataframe(df_history, use_container_width=True)
-            if st.button("🧹 清空历史记录", use_container_width=True):
+            if st.button("🧹 清空历史记录", width="stretch"):
                 st.session_state.push_history = []
                 st.rerun()
     else:
         st.info("暂无推送记录")
 
 # ===================== 模块三：PFMEA 智能生成工具 =====================
-# 以下内容基本来自 pfmeasc.py，仅做必要的适配（移除了 set_page_config，调整了侧边栏样式）
-# 注意：内置 API 密钥已按用户提供配置
 def pfmea_tool():
     # 核心配置
     API_KEY = "7abbafd6-4d6e-4dad-9172-ea2d165c7a44"
@@ -434,7 +432,9 @@ def pfmea_tool():
         ws.title = "PFMEA汇总"
         headers = ["工序", "失效模式", "失效后果", "失效原因", "预防措施", "探测措施", "严重度S", "频度O", "探测度D", "AP等级"]
         for col, h in enumerate(headers, 1):
-            ws.cell(row=1, column=col, value=h).font = Font(bold=True)
+            cell = ws.cell(row=1, column=col, value=h)
+            cell.font = Font(bold=True)
+            cell.alignment = Alignment(horizontal="center", vertical="center")
         row = 2
         for process, items in pfmea_data.items():
             for item in items:
@@ -469,7 +469,7 @@ def pfmea_tool():
     if gen_mode == "AI智能生成":
         scheme_count = st.slider("方案数量", 2, 5, 3)
 
-    if st.button("🚀 生成PFMEA", type="primary", use_container_width=True) and selected_processes:
+    if st.button("🚀 生成PFMEA", type="primary", width="stretch") and selected_processes:
         pfmea_data = {}
         for proc in selected_processes:
             if gen_mode == "本地标准库":
@@ -491,7 +491,8 @@ def pfmea_tool():
                     all_rows.append({"工序": p, **item})
             if all_rows:
                 df = pd.DataFrame(all_rows)
-                edited = st.data_editor(df, use_container_width=True, num_rows="dynamic")
+                df = reset_df_index(df)  # 避免 data_editor 索引警告
+                edited = st.data_editor(df, use_container_width=True, num_rows="dynamic", hide_index=True)
                 # 重新组装
                 updated = {}
                 for _, row in edited.iterrows():
@@ -508,7 +509,7 @@ def pfmea_tool():
                     data=excel_file,
                     file_name=f"{product_type}_PFMEA_{datetime.now().strftime('%Y%m%d%H%M%S')}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    use_container_width=True
+                    width="stretch"
                 )
 
 # ===================== 主界面 =====================
@@ -520,36 +521,36 @@ def main():
         col1, col2, col3 = st.columns(3)
 
         with col1:
-            if st.button("📸 Excel 图片工具\n\n将多张图片按顺序插入 Excel 表格", use_container_width=True):
+            if st.button("📸 Excel 图片工具\n\n将多张图片按顺序插入 Excel 表格", width="stretch"):
                 st.session_state.current_page = "excel_image"
                 st.rerun()
 
         with col2:
-            if st.button("📱 信息推送工具\n\n拍照/选图推送至企业微信群", use_container_width=True):
+            if st.button("📱 信息推送工具\n\n拍照/选图推送至企业微信群", width="stretch"):
                 st.session_state.current_page = "image_push"
                 st.rerun()
 
         with col3:
-            if st.button("⚡ PFMEA 智能生成工具\n\n符合 AIAG-VDA 标准的 FMEA 生成", use_container_width=True):
+            if st.button("⚡ PFMEA 智能生成工具\n\n符合 AIAG-VDA 标准的 FMEA 生成", width="stretch"):
                 st.session_state.current_page = "pfmea"
                 st.rerun()
 
     # 模块页面
     elif st.session_state.current_page == "excel_image":
         excel_image_tool()
-        if st.button("🏠 返回首页", use_container_width=True):
+        if st.button("🏠 返回首页", width="stretch"):
             st.session_state.current_page = "home"
             st.rerun()
 
     elif st.session_state.current_page == "image_push":
         image_push_tool()
-        if st.button("🏠 返回首页", use_container_width=True):
+        if st.button("🏠 返回首页", width="stretch"):
             st.session_state.current_page = "home"
             st.rerun()
 
     elif st.session_state.current_page == "pfmea":
         pfmea_tool()
-        if st.button("🏠 返回首页", use_container_width=True):
+        if st.button("🏠 返回首页", width="stretch"):
             st.session_state.current_page = "home"
             st.rerun()
 
