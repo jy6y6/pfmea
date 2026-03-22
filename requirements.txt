@@ -1,12 +1,6 @@
-# 核心框架
 streamlit>=1.32.0
-# 数据处理
 pandas>=2.0.0
 openpyxl>=3.1.0
-# 图片处理
 pillow>=10.0.0
-# 网络请求
 requests>=2.31.0
 urllib3>=2.0.0
-# 🔥 新增：长按拖拽排序（必须加）
-streamlit-draggable>=0.1.2
