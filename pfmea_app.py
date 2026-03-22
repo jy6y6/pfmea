@@ -29,16 +29,15 @@ st.set_page_config(
 # ===================== 精致主题CSS =====================
 st.markdown("""
 <style>
-    /* 全局背景与字体 */
+    /* 全局背景 */
     .stApp {
         background: linear-gradient(135deg, #f0f7e8 0%, #e9f3e0 100%);
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
     }
     
-    /* 卡片样式 - 玻璃质感 */
+    /* 卡片样式 */
     .card {
         background: rgba(255, 255, 255, 0.96);
-        backdrop-filter: blur(0px);
         border-radius: 28px;
         padding: 28px;
         margin-bottom: 28px;
@@ -184,22 +183,6 @@ st.markdown("""
         border-left-width: 6px;
     }
     
-    /* 状态标签 */
-    .badge-success {
-        background-color: #e6f4e6;
-        color: #2c5a2c;
-        padding: 2px 8px;
-        border-radius: 30px;
-        font-size: 12px;
-        font-weight: 500;
-        display: inline-block;
-    }
-    
-    /* 侧边栏（虽然折叠但自定义样式） */
-    .css-1d391kg {
-        background-color: #f0f7e8;
-    }
-    
     /* 移动端适配 */
     @media (max-width: 768px) {
         .card {
@@ -219,7 +202,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# 初始化 session_state（与之前相同）
+# 初始化 session_state
 def init_session():
     if "current_page" not in st.session_state:
         st.session_state.current_page = "home"
@@ -240,7 +223,7 @@ def init_session():
 
 init_session()
 
-# ===================== 辅助函数（与之前相同）=====================
+# ===================== 通用辅助函数 =====================
 def compress_image_to_limit(image_bytes, max_size_mb=2, max_side=1024):
     img = PILImage.open(io.BytesIO(image_bytes))
     if img.mode in ('RGBA', 'LA', 'P'):
@@ -324,7 +307,7 @@ def excel_image_tool():
     except:
         total_cells = 0
 
-    # 图片上传区域美化
+    # 图片上传
     st.markdown("#### 🖼️ 选择图片")
     uploaded_files = st.file_uploader(
         "支持 JPG、PNG、BMP 格式，可多选",
@@ -353,11 +336,16 @@ def excel_image_tool():
                     img_idx = st.session_state.image_order[idx]
                     img_name, img_bytes = st.session_state.uploaded_images[img_idx]
                     is_selected = (st.session_state.selected_image_idx == img_idx)
-                    # 使用自定义样式卡片
+                    # 使用按钮交换
                     with cols_layout[c]:
+                        # 显示缩略图
+                        st.image(io.BytesIO(img_bytes), width=80, caption=img_name[:12])
+                        # 按钮用于交换
+                        button_key = f"cell_{r}_{c}_{img_idx}"
                         if st.button(
-                            key=f"cell_{r}_{c}_{img_idx}",
-                            use_container_width=True,
+                            "交换位置",
+                            key=button_key,
+                            width='stretch',
                             help="点击交换位置"
                         ):
                             if st.session_state.selected_image_idx is None:
@@ -375,15 +363,14 @@ def excel_image_tool():
                                 st.session_state.selected_image_idx = None
                                 st.success(f"已交换 {st.session_state.uploaded_images[first][0][:12]} ↔ {st.session_state.uploaded_images[second][0][:12]}")
                                 st.rerun()
-                        # 显示缩略图（通过HTML，因为按钮上方无法直接嵌入图片，我们用 st.image 单独显示）
-                        st.image(io.BytesIO(img_bytes), width=80, caption=img_name[:12])
                 else:
                     with cols_layout[c]:
                         st.markdown("<div style='background:#f8f8f8; border-radius:16px; height:100px; display:flex; align-items:center; justify-content:center; color:#aaa;'>空</div>", unsafe_allow_html=True)
 
         # 显示当前顺序
-        order_display = [st.session_state.uploaded_images[i][0][:15] for i in st.session_state.image_order]
-        st.markdown(f"**当前顺序：** {' → '.join(order_display)}")
+        if st.session_state.uploaded_images:
+            order_display = [st.session_state.uploaded_images[i][0][:15] for i in st.session_state.image_order]
+            st.markdown(f"**当前顺序：** {' → '.join(order_display)}")
     elif st.session_state.uploaded_images and total_cells == 0:
         st.warning("请先填写正确的起始和结束单元格以预览布局。")
 
@@ -401,7 +388,7 @@ def excel_image_tool():
                 st.error(f"加载失败: {e}")
 
     # 生成下载
-    if st.button("🚀 生成并下载 Excel 文件", type="primary", use_container_width=True):
+    if st.button("🚀 生成并下载 Excel 文件", type="primary", width='stretch'):
         if not st.session_state.uploaded_images:
             st.error("请先上传图片")
         elif not start_cell or not end_cell or total_cells == 0:
@@ -465,7 +452,7 @@ def excel_image_tool():
                     data=output,
                     file_name=f"图片表格_{datetime.now().strftime('%Y%m%d%H%M%S')}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    use_container_width=True
+                    width='stretch'
                 )
                 st.success("✅ Excel 生成完成！")
             except Exception as e:
@@ -499,7 +486,7 @@ def image_push_tool():
             st.warning("最多选择2张图片，已自动限制")
             images = images[:2]
 
-        submitted = st.form_submit_button("📤 提交并推送至企业微信", type="primary", use_container_width=True)
+        submitted = st.form_submit_button("📤 提交并推送至企业微信", type="primary", width='stretch')
 
         if submitted:
             if not model or not line or not detection_desc:
@@ -563,7 +550,7 @@ def image_push_tool():
 
         st.dataframe(filtered_df, use_container_width=True)
 
-        if st.button("📥 导出当前筛选记录为 Excel", use_container_width=True):
+        if st.button("📥 导出当前筛选记录为 Excel", width='stretch'):
             if not filtered_df.empty:
                 excel_file = export_history_to_excel(filtered_df)
                 st.download_button(
@@ -571,7 +558,7 @@ def image_push_tool():
                     data=excel_file,
                     file_name=f"推送记录_{start_date}_{end_date}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    use_container_width=True
+                    width='stretch'
                 )
             else:
                 st.warning("没有符合条件的记录")
@@ -580,24 +567,68 @@ def image_push_tool():
     st.markdown("</div>", unsafe_allow_html=True)
 
 # ===================== 模块三：PFMEA 智能生成工具 =====================
-# 本地标准库（与之前相同，省略长内容，实际使用时完整复制）
-# 为节省篇幅，此处使用占位，实际部署时请复制之前的完整库
+# 本地标准库（电池包和充电器各包含至少 5 个工序，每个工序至少 3 条）
 BATTERY_PROCESS_LIB = {
     "电芯来料检验": [
         {"失效模式": "电芯外观尺寸超差", "失效后果": "电芯无法装入模组壳体", "失效原因": "来料尺寸公差不符合图纸要求", "预防措施": "制定电芯来料检验规范，量具定期校准", "探测措施": "首件全尺寸检验，巡检按AQL抽样", "严重度S": 6, "频度O": 3, "探测度D": 4, "AP等级": "中"},
         {"失效模式": "电芯电压/内阻异常", "失效后果": "模组充放电异常，循环寿命衰减", "失效原因": "电芯生产工艺异常，存储环境不达标", "预防措施": "每批次电压内阻全检，温湿度监控", "探测措施": "自动化检测设备100%全检，异常报警隔离", "严重度S": 9, "频度O": 2, "探测度D": 2, "AP等级": "高"},
         {"失效模式": "电芯表面划伤/破损", "失效后果": "绝缘性能下降，可能引发短路", "失效原因": "来料包装破损，搬运过程中磕碰", "预防措施": "包装标准化，运输防护升级", "探测措施": "目视全检，不良品隔离", "严重度S": 7, "频度O": 3, "探测度D": 3, "AP等级": "高"},
     ],
-    # ... 其他工序（与之前相同）
+    "模组堆叠装配": [
+        {"失效模式": "电芯堆叠顺序错误", "失效后果": "电路连接错误，短路风险", "失效原因": "作业人员未按SOP操作，防错失效", "预防措施": "安装极性视觉防错装置，培训考核", "探测措施": "视觉设备100%检测，异常停机", "严重度S": 9, "频度O": 2, "探测度D": 2, "AP等级": "高"},
+        {"失效模式": "电芯之间间距不均", "失效后果": "散热不均，影响寿命", "失效原因": "堆叠工装磨损，定位不准", "预防措施": "定期校准工装，首件确认", "探测措施": "激光测距抽检", "严重度S": 5, "频度O": 3, "探测度D": 3, "AP等级": "中"},
+        {"失效模式": "绝缘片漏装/错装", "失效后果": "短路风险，严重时起火", "失效原因": "物料清单错误，作业疏忽", "预防措施": "物料扫码防错，双人复核", "探测措施": "视觉系统检测绝缘片有无", "严重度S": 9, "频度O": 2, "探测度D": 1, "AP等级": "高"},
+    ],
+    "激光焊接": [
+        {"失效模式": "焊接熔深不足", "失效后果": "连接强度不足，虚焊导致断路", "失效原因": "激光功率不稳定，焦距偏移", "预防措施": "每日焊接参数验证，设备定期维护", "探测措施": "焊接后拉力测试，在线监控", "严重度S": 8, "频度O": 2, "探测度D": 2, "AP等级": "高"},
+        {"失效模式": "焊接飞溅", "失效后果": "污染其他部件，可能引起短路", "失效原因": "保护气体流量不足，板材表面脏污", "预防措施": "清洁板材，优化焊接参数", "探测措施": "目视检查，飞溅残留检测", "严重度S": 6, "频度O": 3, "探测度D": 3, "AP等级": "中"},
+        {"失效模式": "焊接位置偏移", "失效后果": "焊接区域未对准，强度不足", "失效原因": "定位夹具松动，视觉定位误差", "预防措施": "定期校准夹具，视觉定位自检", "探测措施": "首件全检，过程SPC监控", "严重度S": 7, "频度O": 2, "探测度D": 2, "AP等级": "高"},
+    ],
+    "BMS装配": [
+        {"失效模式": "BMS板装配位置偏移", "失效后果": "信号采集异常，BMS通讯故障", "失效原因": "定位工装磨损，装配手法不当", "预防措施": "使用定位治具，首件确认", "探测措施": "视觉系统检测位置，电测验证", "严重度S": 7, "频度O": 2, "探测度D": 2, "AP等级": "高"},
+        {"失效模式": "线束接插件插接不到位", "失效后果": "接触不良，信号中断", "失效原因": "作业人员未插到位，防错缺失", "预防措施": "安装插接防错装置，培训", "探测措施": "自动插拔力检测，功能测试", "严重度S": 8, "频度O": 2, "探测度D": 1, "AP等级": "高"},
+        {"失效模式": "BMS固件烧录错误", "失效后果": "BMS无法正常工作，功能失效", "失效原因": "烧录程序版本错误，烧录工装接触不良", "预防措施": "扫码自动匹配程序，定期维护烧录座", "探测措施": "烧录后自检，功能测试", "严重度S": 9, "频度O": 2, "探测度D": 1, "AP等级": "高"},
+    ],
+    "密封测试": [
+        {"失效模式": "密封胶涂胶不均匀", "失效后果": "防水性能下降，IP等级不达标", "失效原因": "胶阀堵塞，轨迹参数偏差", "预防措施": "每日清洗胶阀，定期校准轨迹", "探测措施": "视觉检测胶宽，气密测试", "严重度S": 7, "频度O": 3, "探测度D": 2, "AP等级": "高"},
+        {"失效模式": "壳体螺丝紧固扭矩不足", "失效后果": "松动漏水，连接失效", "失效原因": "扭矩枪未校准，漏打螺丝", "预防措施": "扭矩枪每日点检，防错计数", "探测措施": "扭矩抽检，气密测试", "严重度S": 6, "频度O": 2, "探测度D": 2, "AP等级": "中"},
+        {"失效模式": "气密测试泄漏", "失效后果": "防水失效，内部器件损坏", "失效原因": "密封圈破损，壳体变形", "预防措施": "来料密封圈检验，壳体尺寸监控", "探测措施": "气密测试仪100%检测，泄漏定位", "严重度S": 8, "频度O": 2, "探测度D": 1, "AP等级": "高"},
+    ],
+    "老化测试": [
+        {"失效模式": "老化过程中通讯中断", "失效后果": "产品功能不稳定，客户投诉", "失效原因": "线束松动，BMS软件bug", "预防措施": "老化前插接确认，软件版本管控", "探测措施": "在线监控通讯状态，报警", "严重度S": 8, "频度O": 2, "探测度D": 2, "AP等级": "高"},
+        {"失效模式": "充放电循环异常", "失效后果": "容量不达标，寿命短", "失效原因": "电芯一致性差，BMS保护参数错误", "预防措施": "电芯分选配组，BMS参数验证", "探测措施": "充放电设备监控，数据记录分析", "严重度S": 9, "频度O": 2, "探测度D": 1, "AP等级": "高"},
+        {"失效模式": "温度监控失效", "失效后果": "过温未保护，热失控风险", "失效原因": "温度传感器故障，线束接触不良", "预防措施": "传感器来料检验，插接防错", "探测措施": "老化过程温度曲线监控，报警", "严重度S": 9, "频度O": 2, "探测度D": 1, "AP等级": "高"},
+    ]
 }
 CHARGER_PROCESS_LIB = {
     "PCB来料检验": [
         {"失效模式": "PCB板尺寸超差", "失效后果": "PCB无法装入壳体", "失效原因": "PCB生产制程偏差", "预防措施": "制定PCB来料检验规范，首件全检", "探测措施": "首件全尺寸检验，巡检抽检", "严重度S": 5, "频度O": 3, "探测度D": 4, "AP等级": "中"},
-        # ... 其他工序
+        {"失效模式": "铜箔起泡", "失效后果": "焊接可靠性下降，虚焊", "失效原因": "PCB受潮，层压工艺不良", "预防措施": "来料烘烤，存储湿度控制", "探测措施": "外观检查，切片分析", "严重度S": 6, "频度O": 2, "探测度D": 3, "AP等级": "中"},
+        {"失效模式": "丝印错误", "失效后果": "元器件贴装错误", "失效原因": "PCB制板厂丝印工序失误", "预防措施": "IQC核对图纸，首件确认", "探测措施": "AOI检测丝印内容", "严重度S": 7, "频度O": 2, "探测度D": 2, "AP等级": "高"},
+    ],
+    "SMT贴片焊接": [
+        {"失效模式": "元器件贴装偏移", "失效后果": "焊接不良，功能失效", "失效原因": "贴片机吸嘴磨损，程序坐标偏差", "预防措施": "定期校准设备，首件验证", "探测措施": "AOI全检，SPI锡膏检测", "严重度S": 7, "频度O": 2, "探测度D": 2, "AP等级": "高"},
+        {"失效模式": "立碑", "失效后果": "开路，功能失效", "失效原因": "回流焊温度曲线不当，焊盘设计不合理", "预防措施": "优化炉温曲线，PCB焊盘设计DFM评审", "探测措施": "AOI检测，X-ray抽查", "严重度S": 8, "频度O": 2, "探测度D": 2, "AP等级": "高"},
+        {"失效模式": "少锡/锡珠", "失效后果": "虚焊，短路风险", "失效原因": "钢网堵塞，刮刀压力不当", "预防措施": "钢网清洗周期，SPI监控", "探测措施": "SPI全检，AOI复检", "严重度S": 6, "频度O": 3, "探测度D": 1, "AP等级": "中"},
+    ],
+    "插件后焊": [
+        {"失效模式": "插件极性反向", "失效后果": "电路功能异常，烧毁", "失效原因": "作业人员插反，防错缺失", "预防措施": "极性标识清晰，防错工装", "探测措施": "AOI检测，电测验证", "严重度S": 9, "频度O": 2, "探测度D": 1, "AP等级": "高"},
+        {"失效模式": "焊点虚焊/连锡", "失效后果": "功能失效，短路", "失效原因": "烙铁温度不当，助焊剂残留", "预防措施": "定期校准烙铁，作业指导", "探测措施": "AOI检测，ICT测试", "严重度S": 7, "频度O": 3, "探测度D": 2, "AP等级": "高"},
+        {"失效模式": "元件漏插", "失效后果": "功能缺失", "失效原因": "物料漏放，作业疏忽", "预防措施": "物料清单核对，首件确认", "探测措施": "AOI检测，功能测试", "严重度S": 8, "频度O": 2, "探测度D": 1, "AP等级": "高"},
+    ],
+    "功能测试": [
+        {"失效模式": "测试程序未正确加载", "失效后果": "测试结果误判", "失效原因": "程序版本错误，上传失败", "预防措施": "扫码自动匹配程序，版本管控", "探测措施": "自检程序验证", "严重度S": 6, "频度O": 2, "探测度D": 2, "AP等级": "中"},
+        {"失效模式": "测试探针接触不良", "失效后果": "误判为不良品", "失效原因": "探针磨损，氧化", "预防措施": "定期更换探针，清洁", "探测措施": "标准板校验", "严重度S": 5, "频度O": 3, "探测度D": 3, "AP等级": "中"},
+        {"失效模式": "测试参数设置错误", "失效后果": "不良品流出", "失效原因": "操作员误改参数", "预防措施": "权限管理，参数锁定", "探测措施": "首件测试验证", "严重度S": 7, "频度O": 2, "探测度D": 2, "AP等级": "高"},
+    ],
+    "老化测试": [
+        {"失效模式": "老化过程中无输出", "失效后果": "功能失效", "失效原因": "内部元器件损坏，焊接不良", "预防措施": "老化前功能测试，老化架连接确认", "探测措施": "在线监控输出，报警", "严重度S": 8, "频度O": 2, "探测度D": 2, "AP等级": "高"},
+        {"失效模式": "老化温度过高", "失效后果": "器件寿命缩短", "失效原因": "散热风扇故障，环境温度高", "预防措施": "定期维护老化架，温度监控", "探测措施": "温度传感器实时监控，超温报警", "严重度S": 7, "频度O": 2, "探测度D": 1, "AP等级": "高"},
+        {"失效模式": "老化时间不足", "失效后果": "早期失效未暴露", "失效原因": "人为提前下架", "预防措施": "自动计时，防错设计", "探测措施": "系统记录老化时间，超时报警", "严重度S": 6, "频度O": 2, "探测度D": 2, "AP等级": "中"},
     ]
 }
-# 实际使用时请补全之前代码中的完整库，此处仅为演示
 
+# AI 生成函数
 def create_retry_session():
     session = requests.Session()
     retry = Retry(total=3, backoff_factor=1, status_forcelist=[429,500,502,503,504])
@@ -801,19 +832,20 @@ def pfmea_tool():
     # 产品类型
     product_type = st.radio("产品类型", ["电池包", "充电器"], horizontal=True)
 
-    # 工序选择
+    # 动态构建工序列表（标准库 + 知识库）
     process_lib = BATTERY_PROCESS_LIB if product_type == "电池包" else CHARGER_PROCESS_LIB
-    all_process = list(process_lib.keys())
+    all_process = set(process_lib.keys())
+    # 知识库中的工序（可能包含自定义）
     if st.session_state.user_knowledge_base:
-        all_process = list(set(all_process + list(st.session_state.user_knowledge_base.keys())))
-    all_process.sort()
+        all_process.update(st.session_state.user_knowledge_base.keys())
+    all_process = sorted(all_process)
 
     col1, col2 = st.columns([3, 1])
     with col1:
         selected_processes = st.multiselect("选择工序（可多选）", all_process, default=all_process[:2] if all_process else [])
     with col2:
         custom_process = st.text_input("自定义工序名称")
-        if st.button("➕ 添加自定义工序", use_container_width=True):
+        if st.button("➕ 添加自定义工序", width='stretch'):
             if custom_process and custom_process not in selected_processes:
                 selected_processes.append(custom_process)
                 st.success(f"已添加工序：{custom_process}")
@@ -847,7 +879,7 @@ def pfmea_tool():
             col1, col2 = st.columns(2)
             with col1:
                 kb_json = export_knowledge_to_json()
-                st.download_button("📤 导出知识库备份（JSON）", data=kb_json, file_name=f"PFMEA知识库_{datetime.now().strftime('%Y%m%d')}.json", mime="application/json", use_container_width=True)
+                st.download_button("📤 导出知识库备份（JSON）", data=kb_json, file_name=f"PFMEA知识库_{datetime.now().strftime('%Y%m%d')}.json", mime="application/json", width='stretch')
             with col2:
                 backup_file = st.file_uploader("📥 导入知识库备份（JSON）", type=["json"], key="kb_import_json")
                 if backup_file:
@@ -871,7 +903,7 @@ def pfmea_tool():
         scheme_count = st.slider("AI生成方案数量", 2, 5, 3)
         mix_knowledge = st.checkbox("混合知识库内容作为独立方案", value=True, help="勾选后，知识库中该工序的内容将作为一个额外方案供选择")
 
-    if st.button("🔌 测试AI连接", use_container_width=True):
+    if st.button("🔌 测试AI连接", width='stretch'):
         with st.spinner("正在测试AI连接..."):
             test_result, err = generate_pfmea_ai("电芯来料检验", "电池包", 1)
             if test_result:
@@ -879,7 +911,7 @@ def pfmea_tool():
             else:
                 st.error(f"❌ AI连接失败: {err}")
 
-    if st.button("🚀 生成PFMEA方案", type="primary", use_container_width=True) and selected_processes:
+    if st.button("🚀 生成PFMEA方案", type="primary", width='stretch') and selected_processes:
         st.session_state.generated_pfmea_data = {}
         st.session_state.selected_ai_scheme = {}
         progress_bar = st.progress(0)
@@ -947,14 +979,14 @@ def pfmea_tool():
                 st.rerun()
             st.divider()
 
-        if st.button("✅ 确认并导出 Excel 文件", type="primary", use_container_width=True):
+        if st.button("✅ 确认并导出 Excel 文件", type="primary", width='stretch'):
             excel_file = export_pfmea_excel(final_data, product_type)
             st.download_button(
                 label="📥 下载 PFMEA Excel 文件",
                 data=excel_file,
                 file_name=f"{product_type}_PFMEA_{datetime.now().strftime('%Y%m%d%H%M%S')}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True
+                width='stretch'
             )
 
     st.markdown("</div>", unsafe_allow_html=True)
@@ -968,10 +1000,10 @@ def main():
         with col1:
             with st.container():
                 st.markdown("<div class='card' style='text-align: center;'>", unsafe_allow_html=True)
-                st.image("https://img.icons8.com/fluency/96/000000/microsoft-excel-2019.png", width=64)
+                st.markdown("📊", unsafe_allow_html=True)
                 st.subheader("Excel 图片工具")
                 st.markdown("将多张图片按顺序插入 Excel 表格")
-                if st.button("进入工具", key="btn_excel", use_container_width=True):
+                if st.button("进入工具", key="btn_excel", width='stretch'):
                     st.session_state.current_page = "excel_image"
                     st.rerun()
                 st.markdown("</div>", unsafe_allow_html=True)
@@ -979,10 +1011,10 @@ def main():
         with col2:
             with st.container():
                 st.markdown("<div class='card' style='text-align: center;'>", unsafe_allow_html=True)
-                st.image("https://img.icons8.com/fluency/96/000000/wechat.png", width=64)
+                st.markdown("💬", unsafe_allow_html=True)
                 st.subheader("信息推送工具")
                 st.markdown("拍照/选图推送至企业微信群")
-                if st.button("进入工具", key="btn_push", use_container_width=True):
+                if st.button("进入工具", key="btn_push", width='stretch'):
                     st.session_state.current_page = "image_push"
                     st.rerun()
                 st.markdown("</div>", unsafe_allow_html=True)
@@ -990,27 +1022,27 @@ def main():
         with col3:
             with st.container():
                 st.markdown("<div class='card' style='text-align: center;'>", unsafe_allow_html=True)
-                st.image("https://img.icons8.com/fluency/96/000000/quality.png", width=64)
+                st.markdown("⚡", unsafe_allow_html=True)
                 st.subheader("PFMEA 智能生成")
                 st.markdown("符合 AIAG-VDA 标准的 FMEA 生成")
-                if st.button("进入工具", key="btn_pfmea", use_container_width=True):
+                if st.button("进入工具", key="btn_pfmea", width='stretch'):
                     st.session_state.current_page = "pfmea"
                     st.rerun()
                 st.markdown("</div>", unsafe_allow_html=True)
 
     elif st.session_state.current_page == "excel_image":
         excel_image_tool()
-        if st.button("🏠 返回首页", use_container_width=True):
+        if st.button("🏠 返回首页", width='stretch'):
             st.session_state.current_page = "home"
             st.rerun()
     elif st.session_state.current_page == "image_push":
         image_push_tool()
-        if st.button("🏠 返回首页", use_container_width=True):
+        if st.button("🏠 返回首页", width='stretch'):
             st.session_state.current_page = "home"
             st.rerun()
     elif st.session_state.current_page == "pfmea":
         pfmea_tool()
-        if st.button("🏠 返回首页", use_container_width=True):
+        if st.button("🏠 返回首页", width='stretch'):
             st.session_state.current_page = "home"
             st.rerun()
 
