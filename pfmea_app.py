@@ -18,15 +18,23 @@ from openpyxl.drawing.image import Image as XLImage
 from openpyxl.utils import get_column_letter
 from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
 
+# 导入本地知识库（100+ 工序，每个至少4条失效模式）
+try:
+    from knowledge_base import LOCAL_KNOWLEDGE_BASE
+except ImportError:
+    # 如果文件不存在，使用默认空字典
+    LOCAL_KNOWLEDGE_BASE = {}
+    st.warning("未找到 knowledge_base.py，请确保该文件存在。")
+
 # ===================== 全局配置 =====================
 st.set_page_config(
     page_title="工程工具箱",
-    page_icon="🧰",
+    page_icon="🛠️",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
 
-# 自定义CSS（淡绿色主题）
+# 自定义CSS（精致淡绿色主题，与之前相同）
 st.markdown("""
 <style>
     .stApp {
@@ -38,13 +46,14 @@ st.markdown("""
         border-radius: 28px;
         padding: 28px;
         margin-bottom: 28px;
-        box-shadow: 0 12px 28px rgba(0, 0, 0, 0.05);
+        box-shadow: 0 12px 28px rgba(0, 0, 0, 0.05), 0 2px 4px rgba(0, 0, 0, 0.02);
         border: 1px solid rgba(212, 226, 193, 0.5);
-        transition: all 0.3s;
+        transition: all 0.3s cubic-bezier(0.2, 0, 0, 1);
     }
     .card:hover {
         box-shadow: 0 20px 32px rgba(0, 0, 0, 0.08);
         transform: translateY(-2px);
+        border-color: #c2ddac;
     }
     .stButton button {
         background: linear-gradient(95deg, #6f9e6f 0%, #5a8a5a 100%);
@@ -53,51 +62,88 @@ st.markdown("""
         border: none;
         padding: 0.6rem 1.8rem;
         font-weight: 500;
+        font-size: 0.95rem;
+        letter-spacing: 0.3px;
         transition: all 0.2s;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
     }
     .stButton button:hover {
         background: linear-gradient(95deg, #5a8a5a 0%, #4f784f 100%);
         transform: translateY(-1px);
         box-shadow: 0 6px 12px rgba(111, 158, 111, 0.2);
     }
+    .stButton button:active {
+        transform: translateY(0);
+    }
     .stTextInput input, .stTextArea textarea, .stSelectbox div[data-baseweb="select"] {
         border-radius: 20px;
         border: 1px solid #d4e2c1;
+        background-color: #ffffff;
         padding: 0.6rem 1rem;
+        transition: 0.2s;
+    }
+    .stTextInput input:focus, .stTextArea textarea:focus {
+        border-color: #6f9e6f;
+        box-shadow: 0 0 0 2px rgba(111,158,111,0.2);
+        outline: none;
     }
     h1, h2, h3 {
         color: #2c5a2c;
         font-weight: 600;
+        letter-spacing: -0.02em;
     }
     h1 {
         font-size: 2.2rem;
+        margin-bottom: 0.2rem;
     }
     h2 {
+        font-size: 1.6rem;
+        margin-top: 0.5rem;
         border-left: 4px solid #6f9e6f;
         padding-left: 16px;
+    }
+    h3 {
+        font-size: 1.2rem;
+        margin-top: 0.5rem;
     }
     .dataframe {
         border-radius: 20px;
         overflow: hidden;
+        font-size: 0.85rem;
+        border-collapse: collapse;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.05);
     }
-    .preview-cell {
-        background: #fefef7;
+    .dataframe th {
+        background-color: #eef5e6;
+        color: #2c5a2c;
+        font-weight: 600;
+        padding: 10px 12px;
+    }
+    .dataframe td {
+        padding: 8px 12px;
+    }
+    hr {
+        margin: 32px 0;
+        border: none;
+        height: 1px;
+        background: linear-gradient(90deg, transparent, #d4e2c1, transparent);
+    }
+    .stAlert {
         border-radius: 20px;
-        padding: 12px;
-        text-align: center;
-        border: 1px solid #e2efd3;
-        transition: 0.2s;
+        border-left-width: 6px;
     }
-    .preview-cell img {
-        max-width: 80px;
-        max-height: 80px;
-        object-fit: contain;
-        border-radius: 12px;
+    @media (max-width: 768px) {
+        .card {
+            padding: 20px;
+        }
+        h1 {
+            font-size: 1.8rem;
+        }
     }
 </style>
 """, unsafe_allow_html=True)
 
-# ===================== 初始化 session_state =====================
+# 初始化 session_state
 def init_session():
     if "current_page" not in st.session_state:
         st.session_state.current_page = "home"
@@ -106,13 +152,11 @@ def init_session():
     if "uploaded_images" not in st.session_state:
         st.session_state.uploaded_images = []
     if "user_knowledge_base" not in st.session_state:
-        st.session_state.user_knowledge_base = {}      # 用户导入的额外知识库
+        st.session_state.user_knowledge_base = {}      # 用户导入的知识库
     if "generated_pfmea_data" not in st.session_state:
         st.session_state.generated_pfmea_data = {}
     if "selected_ai_scheme" not in st.session_state:
         st.session_state.selected_ai_scheme = {}
-    if "knowledge_file_updated" not in st.session_state:
-        st.session_state.knowledge_file_updated = False
 
 init_session()
 
@@ -168,11 +212,11 @@ def export_history_to_excel(history_df):
     output.seek(0)
     return output
 
-# ===================== 模块一：Excel 图片工具（简化版） =====================
+# ===================== 模块一：Excel 图片工具（简化版）=====================
 def excel_image_tool():
     st.markdown("<div class='card'>", unsafe_allow_html=True)
     st.header("📸 Excel 图片工具")
-    st.markdown("将图片按上传顺序插入 Excel 表格指定区域，支持新建或加载现有文件。")
+    st.markdown("将多张图片按上传顺序插入 Excel 表格指定区域，支持新建或加载现有文件。")
 
     # 单元格区域设置
     col1, col2 = st.columns(2)
@@ -201,22 +245,16 @@ def excel_image_tool():
         total_cells = 0
 
     # 图片上传
-    st.markdown("#### 🖼️ 选择图片（按顺序上传）")
+    st.markdown("#### 🖼️ 选择图片")
     uploaded_files = st.file_uploader(
-        "支持 JPG、PNG、BMP 格式，请按期望的插入顺序选择图片",
+        "支持 JPG、PNG、BMP 格式，可多选",
         type=["jpg", "jpeg", "png", "bmp"],
         accept_multiple_files=True,
         key="img_upload"
     )
     if uploaded_files:
         st.session_state.uploaded_images = [(f.name, f.getvalue()) for f in uploaded_files]
-        st.success(f"✅ 已上传 {len(st.session_state.uploaded_images)} 张图片，将按此顺序插入")
-        # 显示缩略图预览
-        st.markdown("**预览：**")
-        cols = st.columns(min(5, len(st.session_state.uploaded_images)))
-        for i, (name, img_bytes) in enumerate(st.session_state.uploaded_images):
-            with cols[i % 5]:
-                st.image(io.BytesIO(img_bytes), width=80, caption=f"{i+1}. {name[:12]}")
+        st.success(f"✅ 已上传 {len(st.session_state.uploaded_images)} 张图片，将按上传顺序插入")
 
     # Excel 来源选择
     st.markdown("#### 📁 Excel 文件来源")
@@ -303,7 +341,7 @@ def excel_image_tool():
 
     st.markdown("</div>", unsafe_allow_html=True)
 
-# ===================== 模块二：信息推送工具 =====================
+# ===================== 模块二：信息推送工具（保持不变）=====================
 def image_push_tool():
     st.markdown("<div class='card'>", unsafe_allow_html=True)
     st.header("📱 信息推送工具")
@@ -376,6 +414,8 @@ def image_push_tool():
     st.subheader("📜 历史填报记录")
     if st.session_state.push_history:
         df_history = pd.DataFrame(st.session_state.push_history)
+
+        # 时间筛选
         col1, col2 = st.columns(2)
         with col1:
             start_date = st.date_input("起始日期", value=datetime.now().date() - timedelta(days=30))
@@ -388,7 +428,9 @@ def image_push_tool():
         else:
             filtered_df = df_history
             st.error("起始日期不能大于结束日期")
+
         st.dataframe(filtered_df, use_container_width=True)
+
         if st.button("📥 导出当前筛选记录为 Excel", width='stretch'):
             if not filtered_df.empty:
                 excel_file = export_history_to_excel(filtered_df)
@@ -406,56 +448,63 @@ def image_push_tool():
     st.markdown("</div>", unsafe_allow_html=True)
 
 # ===================== 模块三：PFMEA 智能生成工具 =====================
-# ---------- 知识库持久化 ----------
-KNOWLEDGE_FILE = "pfmea_knowledge.json"
+# 注意：知识库来自 LOCAL_KNOWLEDGE_BASE（100+ 工序）和用户导入的 user_knowledge_base
 
-def generate_default_knowledge():
-    """生成包含120+工序、每个工序至少4条PFMEA的默认知识库"""
-    # 为节省篇幅，这里仅展示部分工序，实际代码中会生成大量数据
-    # 由于字符限制，此处给出一个精简示例，但最终部署时会使用完整生成逻辑
-    # 在最终版本中，我们将直接提供一个完整的JSON文件内容（见文末）
-    # 这里简单返回一个最小结构，实际运行时自动生成完整数据
-    base_knowledge = {
-        "电芯来料检验": [
-            {"失效模式": "电芯外观尺寸超差", "失效后果": "电芯无法装入模组壳体", "失效原因": "来料尺寸公差不符合图纸要求", "预防措施": "制定电芯来料检验规范，量具定期校准", "探测措施": "首件全尺寸检验，巡检按AQL抽样", "严重度S": 6, "频度O": 3, "探测度D": 4, "AP等级": "中"},
-            {"失效模式": "电芯电压/内阻异常", "失效后果": "模组充放电异常，循环寿命衰减", "失效原因": "电芯生产工艺异常，存储环境不达标", "预防措施": "每批次电压内阻全检，温湿度监控", "探测措施": "自动化检测设备100%全检，异常报警隔离", "严重度S": 9, "频度O": 2, "探测度D": 2, "AP等级": "高"},
-            {"失效模式": "电芯表面划伤/破损", "失效后果": "绝缘性能下降，可能引发短路", "失效原因": "来料包装破损，搬运过程中磕碰", "预防措施": "包装标准化，运输防护升级", "探测措施": "目视全检，不良品隔离", "严重度S": 7, "频度O": 3, "探测度D": 3, "AP等级": "高"},
-            {"失效模式": "电芯绝缘膜破损", "失效后果": "内部短路风险", "失效原因": "来料绝缘膜缺陷，装配时划伤", "预防措施": "绝缘膜来料抽检，增加防护", "探测措施": "绝缘耐压测试", "严重度S": 9, "频度O": 2, "探测度D": 1, "AP等级": "高"}
-        ],
-        # ... 其他工序会动态生成
-    }
-    # 实际生成时，我们会用循环创建大量工序，这里省略具体生成代码（见最终文件）
-    return base_knowledge
+# AI 生成函数（复用之前的代码，但移除了测试按钮）
+def create_retry_session():
+    session = requests.Session()
+    retry = Retry(total=3, backoff_factor=1, status_forcelist=[429,500,502,503,504])
+    adapter = HTTPAdapter(max_retries=retry)
+    session.mount("https://", adapter)
+    return session
 
-def load_knowledge():
-    """加载外部知识库，若不存在则创建默认"""
-    if os.path.exists(KNOWLEDGE_FILE):
-        with open(KNOWLEDGE_FILE, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    else:
-        default = generate_default_knowledge()
-        with open(KNOWLEDGE_FILE, 'w', encoding='utf-8') as f:
-            json.dump(default, f, ensure_ascii=False, indent=2)
-        return default
-
-def save_knowledge(knowledge):
-    """保存知识库到文件"""
-    with open(KNOWLEDGE_FILE, 'w', encoding='utf-8') as f:
-        json.dump(knowledge, f, ensure_ascii=False, indent=2)
-
-def merge_knowledge(knowledge_dict, existing_kb):
-    """合并两个知识库，根据失效模式+失效原因去重"""
-    for proc, items in knowledge_dict.items():
-        if proc not in existing_kb:
-            existing_kb[proc] = []
-        existing_items = existing_kb[proc]
-        existing_keys = {f"{i.get('失效模式','')}_{i.get('失效原因','')}" for i in existing_items}
-        for item in items:
-            key = f"{item.get('失效模式','')}_{item.get('失效原因','')}"
-            if key not in existing_keys:
-                existing_items.append(item)
-                existing_keys.add(key)
-    return existing_kb
+def generate_pfmea_ai(process_name, product_type, scheme_count=3):
+    API_KEY = "7abbafd6-4d6e-4dad-9172-ea2d165c7a44"
+    API_ENDPOINTS = [
+        "https://api.doubao.com/v1/chat/completions",
+        "https://api.doubaoai.com/v1/chat/completions",
+        "https://open.doubao.com/v1/chat/completions"
+    ]
+    MODELS = ["doubao-pro-32k", "ep-20240805194357-jzrql", "doubao-lite-32k"]
+    session = create_retry_session()
+    headers = {"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"}
+    prompt = f"""
+    你是专业的汽车电子行业PFMEA工程师，精通AIAG-VDA FMEA标准。
+    针对【{process_name}】工序（产品类型：{product_type}），生成{scheme_count}组完全不同的PFMEA方案。
+    每组方案包含3-5条失效模式，必须涵盖不同维度（人、机、料、法、环），确保内容差异化。
+    返回严格的JSON格式：[{{"方案名称":"方案1：...","pfmea_list":[{{"失效模式":"...","失效后果":"...","失效原因":"...","预防措施":"...","探测措施":"...","严重度S":x,"频度O":x,"探测度D":x,"AP等级":"x"}}]}}]
+    只返回JSON，不要其他文字。
+    """
+    last_error = ""
+    for endpoint in API_ENDPOINTS:
+        for model in MODELS:
+            data = {
+                "model": model,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.8,
+                "max_tokens": 4000
+            }
+            try:
+                response = session.post(endpoint, headers=headers, json=data, timeout=90)
+                response.raise_for_status()
+                result = response.json()
+                if "choices" not in result or not result["choices"]:
+                    last_error = f"端点 {endpoint} 模型 {model} 返回无choices"
+                    continue
+                content = result["choices"][0]["message"]["content"]
+                content = re.sub(r'^```json\s*|\s*```$', '', content.strip())
+                parsed = json.loads(content)
+                if isinstance(parsed, list) and all("pfmea_list" in s for s in parsed):
+                    return parsed, None
+                else:
+                    last_error = f"返回格式不正确: {content[:200]}"
+            except json.JSONDecodeError as e:
+                last_error = f"JSON解析失败: {e}\n原始内容: {content[:200] if 'content' in locals() else '无'}"
+                continue
+            except Exception as e:
+                last_error = str(e)
+                continue
+    return None, f"所有API端点均失败，最后错误: {last_error}"
 
 def parse_pfmea_excel(file_bytes):
     try:
@@ -515,6 +564,38 @@ def parse_pfmea_excel(file_bytes):
         st.error(f"解析Excel失败: {e}")
         return {}
 
+def merge_knowledge(knowledge_dict, existing_kb):
+    for proc, items in knowledge_dict.items():
+        if proc not in existing_kb:
+            existing_kb[proc] = []
+        existing_items = existing_kb[proc]
+        existing_keys = {f"{i.get('失效模式','')}_{i.get('失效原因','')}" for i in existing_items}
+        for item in items:
+            key = f"{item.get('失效模式','')}_{item.get('失效原因','')}"
+            if key not in existing_keys:
+                existing_items.append(item)
+                existing_keys.add(key)
+    return existing_kb
+
+def export_knowledge_to_json():
+    return json.dumps(st.session_state.user_knowledge_base, ensure_ascii=False, indent=2)
+
+def import_knowledge_from_json(json_str):
+    try:
+        data = json.loads(json_str)
+        for proc, items in data.items():
+            if proc not in st.session_state.user_knowledge_base:
+                st.session_state.user_knowledge_base[proc] = []
+            existing_keys = {f"{i.get('失效模式','')}_{i.get('失效原因','')}" for i in st.session_state.user_knowledge_base[proc]}
+            for item in items:
+                key = f"{item.get('失效模式','')}_{item.get('失效原因','')}"
+                if key not in existing_keys:
+                    st.session_state.user_knowledge_base[proc].append(item)
+                    existing_keys.add(key)
+        return True
+    except:
+        return False
+
 def export_pfmea_excel(pfmea_data, product_type):
     output = io.BytesIO()
     wb = Workbook()
@@ -564,172 +645,129 @@ def export_pfmea_excel(pfmea_data, product_type):
     output.seek(0)
     return output
 
-def generate_pfmea_ai(process_name, product_type, scheme_count=3):
-    API_KEY = "7abbafd6-4d6e-4dad-9172-ea2d165c7a44"
-    API_ENDPOINTS = [
-        "https://api.doubao.com/v1/chat/completions",
-        "https://api.doubaoai.com/v1/chat/completions",
-        "https://open.doubao.com/v1/chat/completions"
-    ]
-    MODELS = ["doubao-pro-32k", "ep-20240805194357-jzrql", "doubao-lite-32k"]
-    session = requests.Session()
-    retry = Retry(total=3, backoff_factor=1, status_forcelist=[429,500,502,503,504])
-    adapter = HTTPAdapter(max_retries=retry)
-    session.mount("https://", adapter)
-    headers = {"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"}
-    prompt = f"""
-    你是专业的汽车电子行业PFMEA工程师，精通AIAG-VDA FMEA标准。
-    针对【{process_name}】工序（产品类型：{product_type}），生成{scheme_count}组完全不同的PFMEA方案。
-    每组方案包含3-5条失效模式，必须涵盖不同维度（人、机、料、法、环），确保内容差异化。
-    返回严格的JSON格式：[{{"方案名称":"方案1：...","pfmea_list":[{{"失效模式":"...","失效后果":"...","失效原因":"...","预防措施":"...","探测措施":"...","严重度S":x,"频度O":x,"探测度D":x,"AP等级":"x"}}]}}]
-    只返回JSON，不要其他文字。
-    """
-    last_error = ""
-    for endpoint in API_ENDPOINTS:
-        for model in MODELS:
-            data = {
-                "model": model,
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.8,
-                "max_tokens": 4000
-            }
-            try:
-                response = session.post(endpoint, headers=headers, json=data, timeout=90)
-                response.raise_for_status()
-                result = response.json()
-                if "choices" not in result or not result["choices"]:
-                    last_error = f"端点 {endpoint} 模型 {model} 返回无choices"
-                    continue
-                content = result["choices"][0]["message"]["content"]
-                content = re.sub(r'^```json\s*|\s*```$', '', content.strip())
-                parsed = json.loads(content)
-                if isinstance(parsed, list) and all("pfmea_list" in s for s in parsed):
-                    return parsed, None
-                else:
-                    last_error = f"返回格式不正确: {content[:200]}"
-            except json.JSONDecodeError as e:
-                last_error = f"JSON解析失败: {e}\n原始内容: {content[:200] if 'content' in locals() else '无'}"
-                continue
-            except Exception as e:
-                last_error = str(e)
-                continue
-    return None, f"所有API端点均失败，最后错误: {last_error}"
-
 def pfmea_tool():
     st.markdown("<div class='card'>", unsafe_allow_html=True)
     st.title("⚡ PFMEA 智能生成系统")
     st.caption("符合 AIAG-VDA FMEA 第一版 | IATF16949:2016")
     st.divider()
 
-    # 加载本地知识库（默认+用户导入）
-    base_knowledge = load_knowledge()
-    # 合并用户知识库（session中存储的额外导入内容）
-    full_knowledge = base_knowledge.copy()
-    for proc, items in st.session_state.user_knowledge_base.items():
-        if proc in full_knowledge:
-            full_knowledge[proc] = merge_knowledge({proc: items}, full_knowledge)[proc]
-        else:
-            full_knowledge[proc] = items
-
     # 产品类型
     product_type = st.radio("产品类型", ["电池包", "充电器"], horizontal=True)
 
-    # 工序搜索与选择
-    all_processes = sorted(full_knowledge.keys())
+    # 合并本地知识库和用户知识库，得到所有工序列表
+    # 注意：LOCAL_KNOWLEDGE_BASE 已经包含了电池包和充电器的所有工序
+    all_processes = set(LOCAL_KNOWLEDGE_BASE.keys())
+    if st.session_state.user_knowledge_base:
+        all_processes.update(st.session_state.user_knowledge_base.keys())
+    all_processes = sorted(all_processes)
+
+    # 搜索过滤工序
     st.markdown("#### 🔍 搜索工序")
-    search_term = st.text_input("输入关键字快速筛选工序", placeholder="例如：焊接、测试、装配...")
+    search_term = st.text_input("输入关键词过滤工序", placeholder="例如：焊接、测试、来料")
     if search_term:
         filtered_processes = [p for p in all_processes if search_term.lower() in p.lower()]
     else:
         filtered_processes = all_processes
 
+    st.markdown(f"共找到 **{len(filtered_processes)}** 个工序（总计 {len(all_processes)} 个）")
+
+    # 可搜索的多选框（由于 streamlit 原生不支持搜索，我们使用文本框+多选框的组合）
+    selected_processes = st.multiselect("选择工序（可多选）", filtered_processes, default=filtered_processes[:2] if filtered_processes else [])
+
+    # 自定义工序添加
     col1, col2 = st.columns([3, 1])
     with col1:
-        selected_processes = st.multiselect("选择工序（可多选）", filtered_processes, default=filtered_processes[:2] if filtered_processes else [])
-    with col2:
         custom_process = st.text_input("自定义工序名称")
+    with col2:
         if st.button("➕ 添加自定义工序", width='stretch'):
             if custom_process and custom_process not in selected_processes:
                 selected_processes.append(custom_process)
                 st.success(f"已添加工序：{custom_process}")
                 st.rerun()
 
-    # 知识库管理（导入旧Excel）
+    # 知识库管理
     with st.expander("📚 知识库管理（可导入/编辑/导出）"):
         uploaded_kb_file = st.file_uploader("导入已有 PFMEA Excel 文件（.xlsx）", type=["xlsx"], key="kb_import")
         if uploaded_kb_file:
             with st.spinner("正在解析文件..."):
                 kb_data = parse_pfmea_excel(uploaded_kb_file.getvalue())
                 if kb_data:
-                    # 合并到用户知识库
                     st.session_state.user_knowledge_base = merge_knowledge(kb_data, st.session_state.user_knowledge_base)
-                    # 同时更新 full_knowledge 用于当前显示
-                    full_knowledge.update(st.session_state.user_knowledge_base)
                     st.success(f"成功导入 {len(kb_data)} 个工序的条目！")
                     st.rerun()
-
-        if full_knowledge:
-            # 显示知识库内容（可编辑）
-            for proc, items in list(full_knowledge.items())[:10]:  # 限制显示数量，避免界面过长
+        if st.session_state.user_knowledge_base:
+            for proc, items in st.session_state.user_knowledge_base.items():
                 with st.expander(f"📁 {proc}（共{len(items)}条）"):
                     df_kb = pd.DataFrame(items)
                     df_kb = reset_df_index(df_kb)
                     edited_df = st.data_editor(df_kb, use_container_width=True, num_rows="dynamic", hide_index=True, key=f"kb_edit_{proc}")
-                    # 更新按钮
-                    if st.button(f"✅ 更新此工序", key=f"kb_update_{proc}"):
-                        # 更新到用户知识库（如果是默认库中的，则复制一份到用户库）
-                        if proc in base_knowledge:
-                            # 如果原本是默认库，我们保存到用户库
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        if st.button("✅ 更新此工序", key=f"kb_update_{proc}"):
                             st.session_state.user_knowledge_base[proc] = edited_df.to_dict("records")
+                            st.success("已更新")
+                    with col2:
+                        if st.button("🗑️ 删除此工序", key=f"kb_del_{proc}"):
+                            del st.session_state.user_knowledge_base[proc]
+                            st.rerun()
+            col1, col2 = st.columns(2)
+            with col1:
+                kb_json = export_knowledge_to_json()
+                st.download_button("📤 导出知识库备份（JSON）", data=kb_json, file_name=f"PFMEA知识库_{datetime.now().strftime('%Y%m%d')}.json", mime="application/json", width='stretch')
+            with col2:
+                backup_file = st.file_uploader("📥 导入知识库备份（JSON）", type=["json"], key="kb_import_json")
+                if backup_file:
+                    try:
+                        if import_knowledge_from_json(backup_file.read().decode('utf-8')):
+                            st.success("导入成功")
+                            st.rerun()
                         else:
-                            st.session_state.user_knowledge_base[proc] = edited_df.to_dict("records")
-                        # 同时更新 full_knowledge
-                        full_knowledge[proc] = edited_df.to_dict("records")
-                        # 合并后重新保存到文件（这里不保存到默认文件，只保存用户库）
-                        # 可选：将用户库持久化到另一个文件，这里简单提示
-                        st.success("已更新（仅在本次会话生效，可导出备份）")
-                        st.rerun()
-            # 导出备份
-            kb_json = json.dumps(st.session_state.user_knowledge_base, ensure_ascii=False, indent=2)
-            st.download_button("📤 导出用户知识库备份（JSON）", data=kb_json, file_name=f"user_knowledge_{datetime.now().strftime('%Y%m%d')}.json", mime="application/json", width='stretch')
+                            st.error("导入失败，文件格式错误")
+                    except:
+                        st.error("导入失败")
         else:
-            st.info("暂无知识库内容，请导入文件或使用默认库")
+            st.info("暂无用户知识库内容，可通过上传旧PFMEA文件或AI生成后自动入库来积累。")
 
     # 生成设置
     st.subheader("生成设置")
-    gen_mode = st.radio("生成模式", ["本地知识库", "AI智能生成（多方案）"], horizontal=True)
+    gen_mode = st.radio("生成模式", ["本地标准库（含知识库）", "AI智能生成（多方案）"], horizontal=True)
     scheme_count = 3
     mix_knowledge = False
     if gen_mode == "AI智能生成（多方案）":
         scheme_count = st.slider("AI生成方案数量", 2, 5, 3)
         mix_knowledge = st.checkbox("混合知识库内容作为独立方案", value=True, help="勾选后，知识库中该工序的内容将作为一个额外方案供选择")
 
+    # 生成按钮
     if st.button("🚀 生成PFMEA方案", type="primary", width='stretch') and selected_processes:
         st.session_state.generated_pfmea_data = {}
         st.session_state.selected_ai_scheme = {}
         progress_bar = st.progress(0)
         for idx, proc in enumerate(selected_processes):
             progress_bar.progress((idx) / len(selected_processes))
-            if gen_mode == "本地知识库":
-                items = full_knowledge.get(proc, [])
-                if not items:
-                    st.warning(f"工序【{proc}】无本地数据")
+            if gen_mode == "本地标准库（含知识库）":
+                # 从本地库（LOCAL_KNOWLEDGE_BASE）和用户库中获取
+                lib_items = LOCAL_KNOWLEDGE_BASE.get(proc, [])
+                kb_items = st.session_state.user_knowledge_base.get(proc, [])
+                combined = lib_items + kb_items
+                if not combined:
+                    st.warning(f"工序【{proc}】无本地数据，请使用AI生成或先导入知识库")
                     continue
-                st.session_state.generated_pfmea_data[proc] = [{"方案名称": "知识库方案", "pfmea_list": items}]
+                st.session_state.generated_pfmea_data[proc] = [{"方案名称": "本地库+知识库方案", "pfmea_list": combined}]
             else:
                 with st.spinner(f"AI正在生成【{proc}】的方案..."):
                     schemes, err = generate_pfmea_ai(proc, product_type, scheme_count)
                     if err:
                         st.error(f"{proc} AI生成失败: {err}")
-                        items = full_knowledge.get(proc, [])
-                        if items:
-                            st.warning(f"已使用知识库作为备用方案")
-                            st.session_state.generated_pfmea_data[proc] = [{"方案名称": "知识库备用方案", "pfmea_list": items}]
+                        # 降级到本地库
+                        lib_items = LOCAL_KNOWLEDGE_BASE.get(proc, [])
+                        if lib_items:
+                            st.warning(f"已使用本地库作为备用方案")
+                            st.session_state.generated_pfmea_data[proc] = [{"方案名称": "本地库备用方案", "pfmea_list": lib_items}]
                         else:
                             continue
                     else:
-                        if mix_knowledge and proc in full_knowledge:
-                            kb_scheme = {"方案名称": "📁 知识库方案", "pfmea_list": full_knowledge[proc]}
+                        if mix_knowledge and proc in st.session_state.user_knowledge_base:
+                            kb_scheme = {"方案名称": "📁 我的知识库方案", "pfmea_list": st.session_state.user_knowledge_base[proc]}
                             schemes.append(kb_scheme)
                         st.session_state.generated_pfmea_data[proc] = schemes
                         st.session_state.selected_ai_scheme[proc] = 0
@@ -738,6 +776,7 @@ def pfmea_tool():
             st.success("生成完成！请选择方案")
             st.rerun()
 
+    # 方案选择与预览
     if st.session_state.generated_pfmea_data:
         st.subheader("选择最终方案")
         final_data = {}
@@ -766,7 +805,7 @@ def pfmea_tool():
                     if key not in existing_keys:
                         st.session_state.user_knowledge_base[proc].append(item)
                         existing_keys.add(key)
-                st.success(f"已存入用户知识库（去重）")
+                st.success(f"已存入知识库（去重）")
                 st.rerun()
             st.divider()
 
@@ -785,7 +824,7 @@ def pfmea_tool():
 # ===================== 主界面 =====================
 def main():
     if st.session_state.current_page == "home":
-        st.markdown("<div style='text-align: center; padding: 2rem 0 1rem;'><h1>🧰 工程工具箱</h1><p style='color:#6c7a6c;'>请选择要使用的工具模块</p></div>", unsafe_allow_html=True)
+        st.markdown("<div style='text-align: center; padding: 2rem 0 1rem;'><h1>🛠️ 工程工具箱</h1><p style='color:#6c7a6c;'>请选择要使用的工具模块</p></div>", unsafe_allow_html=True)
         col1, col2, col3 = st.columns(3)
 
         with col1:
@@ -793,7 +832,7 @@ def main():
                 st.markdown("<div class='card' style='text-align: center;'>", unsafe_allow_html=True)
                 st.markdown("📊", unsafe_allow_html=True)
                 st.subheader("Excel 图片工具")
-                st.markdown("按顺序插入图片到表格")
+                st.markdown("将多张图片按顺序插入 Excel 表格")
                 if st.button("进入工具", key="btn_excel", width='stretch'):
                     st.session_state.current_page = "excel_image"
                     st.rerun()
@@ -804,7 +843,7 @@ def main():
                 st.markdown("<div class='card' style='text-align: center;'>", unsafe_allow_html=True)
                 st.markdown("💬", unsafe_allow_html=True)
                 st.subheader("信息推送工具")
-                st.markdown("推送图片至企业微信")
+                st.markdown("拍照/选图推送至企业微信群")
                 if st.button("进入工具", key="btn_push", width='stretch'):
                     st.session_state.current_page = "image_push"
                     st.rerun()
@@ -815,7 +854,7 @@ def main():
                 st.markdown("<div class='card' style='text-align: center;'>", unsafe_allow_html=True)
                 st.markdown("⚡", unsafe_allow_html=True)
                 st.subheader("PFMEA 智能生成")
-                st.markdown("符合 IATF16949 标准")
+                st.markdown("符合 AIAG-VDA 标准的 FMEA 生成")
                 if st.button("进入工具", key="btn_pfmea", width='stretch'):
                     st.session_state.current_page = "pfmea"
                     st.rerun()
