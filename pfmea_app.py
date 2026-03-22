@@ -18,11 +18,10 @@ from openpyxl.drawing.image import Image as XLImage
 from openpyxl.utils import get_column_letter
 from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
 
-# 导入本地知识库（100+ 工序，每个至少4条失效模式）
+# 导入本地知识库（100+ 工序）
 try:
     from knowledge_base import LOCAL_KNOWLEDGE_BASE
 except ImportError:
-    # 如果文件不存在，使用默认空字典
     LOCAL_KNOWLEDGE_BASE = {}
     st.warning("未找到 knowledge_base.py，请确保该文件存在。")
 
@@ -34,7 +33,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# 自定义CSS（精致淡绿色主题，与之前相同）
+# 自定义CSS（精致淡绿色主题，紧凑版）
 st.markdown("""
 <style>
     .stApp {
@@ -43,101 +42,80 @@ st.markdown("""
     }
     .card {
         background: rgba(255, 255, 255, 0.96);
-        border-radius: 28px;
-        padding: 28px;
-        margin-bottom: 28px;
-        box-shadow: 0 12px 28px rgba(0, 0, 0, 0.05), 0 2px 4px rgba(0, 0, 0, 0.02);
+        border-radius: 20px;
+        padding: 18px 16px;
+        margin-bottom: 20px;
+        box-shadow: 0 8px 20px rgba(0, 0, 0, 0.05);
         border: 1px solid rgba(212, 226, 193, 0.5);
-        transition: all 0.3s cubic-bezier(0.2, 0, 0, 1);
+        transition: all 0.2s;
     }
     .card:hover {
-        box-shadow: 0 20px 32px rgba(0, 0, 0, 0.08);
+        box-shadow: 0 12px 24px rgba(0, 0, 0, 0.08);
         transform: translateY(-2px);
-        border-color: #c2ddac;
     }
     .stButton button {
         background: linear-gradient(95deg, #6f9e6f 0%, #5a8a5a 100%);
         color: white;
-        border-radius: 40px;
+        border-radius: 30px;
         border: none;
-        padding: 0.6rem 1.8rem;
+        padding: 0.5rem 1.2rem;
         font-weight: 500;
-        font-size: 0.95rem;
-        letter-spacing: 0.3px;
-        transition: all 0.2s;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        font-size: 0.9rem;
+        transition: 0.2s;
     }
     .stButton button:hover {
         background: linear-gradient(95deg, #5a8a5a 0%, #4f784f 100%);
         transform: translateY(-1px);
-        box-shadow: 0 6px 12px rgba(111, 158, 111, 0.2);
-    }
-    .stButton button:active {
-        transform: translateY(0);
+        box-shadow: 0 4px 8px rgba(111, 158, 111, 0.2);
     }
     .stTextInput input, .stTextArea textarea, .stSelectbox div[data-baseweb="select"] {
-        border-radius: 20px;
+        border-radius: 16px;
         border: 1px solid #d4e2c1;
         background-color: #ffffff;
-        padding: 0.6rem 1rem;
-        transition: 0.2s;
-    }
-    .stTextInput input:focus, .stTextArea textarea:focus {
-        border-color: #6f9e6f;
-        box-shadow: 0 0 0 2px rgba(111,158,111,0.2);
-        outline: none;
-    }
-    h1, h2, h3 {
-        color: #2c5a2c;
-        font-weight: 600;
-        letter-spacing: -0.02em;
+        padding: 0.5rem 1rem;
     }
     h1 {
-        font-size: 2.2rem;
-        margin-bottom: 0.2rem;
+        font-size: 1.8rem;
+        margin: 0 0 0.2rem 0;
+        color: #2c5a2c;
     }
     h2 {
-        font-size: 1.6rem;
-        margin-top: 0.5rem;
+        font-size: 1.4rem;
+        margin-top: 0.3rem;
         border-left: 4px solid #6f9e6f;
-        padding-left: 16px;
+        padding-left: 12px;
+        color: #2c5a2c;
     }
     h3 {
-        font-size: 1.2rem;
-        margin-top: 0.5rem;
+        font-size: 1.1rem;
+        margin-top: 0.3rem;
+        color: #3a6b3a;
     }
     .dataframe {
-        border-radius: 20px;
+        border-radius: 16px;
         overflow: hidden;
-        font-size: 0.85rem;
-        border-collapse: collapse;
-        box-shadow: 0 2px 6px rgba(0,0,0,0.05);
-    }
-    .dataframe th {
-        background-color: #eef5e6;
-        color: #2c5a2c;
-        font-weight: 600;
-        padding: 10px 12px;
-    }
-    .dataframe td {
-        padding: 8px 12px;
+        font-size: 0.8rem;
     }
     hr {
-        margin: 32px 0;
+        margin: 20px 0;
         border: none;
         height: 1px;
         background: linear-gradient(90deg, transparent, #d4e2c1, transparent);
     }
-    .stAlert {
+    .badge {
+        background-color: #eef5e6;
+        color: #2c5a2c;
+        padding: 2px 8px;
         border-radius: 20px;
-        border-left-width: 6px;
+        font-size: 12px;
+        display: inline-block;
     }
     @media (max-width: 768px) {
         .card {
-            padding: 20px;
+            padding: 12px;
         }
         h1 {
-            font-size: 1.8rem;
+            font-size: 1.5rem;
         }
     }
 </style>
@@ -152,11 +130,13 @@ def init_session():
     if "uploaded_images" not in st.session_state:
         st.session_state.uploaded_images = []
     if "user_knowledge_base" not in st.session_state:
-        st.session_state.user_knowledge_base = {}      # 用户导入的知识库
+        st.session_state.user_knowledge_base = {}
     if "generated_pfmea_data" not in st.session_state:
         st.session_state.generated_pfmea_data = {}
     if "selected_ai_scheme" not in st.session_state:
         st.session_state.selected_ai_scheme = {}
+    if "search_results" not in st.session_state:
+        st.session_state.search_results = []
 
 init_session()
 
@@ -212,20 +192,18 @@ def export_history_to_excel(history_df):
     output.seek(0)
     return output
 
-# ===================== 模块一：Excel 图片工具（简化版）=====================
+# ===================== 模块一：Excel 图片工具 =====================
 def excel_image_tool():
     st.markdown("<div class='card'>", unsafe_allow_html=True)
     st.header("📸 Excel 图片工具")
     st.markdown("将多张图片按上传顺序插入 Excel 表格指定区域，支持新建或加载现有文件。")
 
-    # 单元格区域设置
     col1, col2 = st.columns(2)
     with col1:
         start_cell = st.text_input("起始单元格 (如 A1)", "A1")
     with col2:
         end_cell = st.text_input("结束单元格 (如 C5)", "C5")
 
-    # 计算单元格数量
     try:
         start_match = re.match(r'([A-Z]+)(\d+)', start_cell.upper())
         end_match = re.match(r'([A-Z]+)(\d+)', end_cell.upper())
@@ -244,7 +222,6 @@ def excel_image_tool():
     except:
         total_cells = 0
 
-    # 图片上传
     st.markdown("#### 🖼️ 选择图片")
     uploaded_files = st.file_uploader(
         "支持 JPG、PNG、BMP 格式，可多选",
@@ -256,7 +233,6 @@ def excel_image_tool():
         st.session_state.uploaded_images = [(f.name, f.getvalue()) for f in uploaded_files]
         st.success(f"✅ 已上传 {len(st.session_state.uploaded_images)} 张图片，将按上传顺序插入")
 
-    # Excel 来源选择
     st.markdown("#### 📁 Excel 文件来源")
     excel_source = st.radio("选择新建或现有文件", ["新建空白工作簿", "上传现有 Excel 文件"], horizontal=True)
     existing_wb = None
@@ -269,7 +245,6 @@ def excel_image_tool():
             except Exception as e:
                 st.error(f"加载失败: {e}")
 
-    # 生成下载
     if st.button("🚀 生成并下载 Excel 文件", type="primary", width='stretch'):
         if not st.session_state.uploaded_images:
             st.error("请先上传图片")
@@ -341,7 +316,7 @@ def excel_image_tool():
 
     st.markdown("</div>", unsafe_allow_html=True)
 
-# ===================== 模块二：信息推送工具（保持不变）=====================
+# ===================== 模块二：信息推送工具 =====================
 def image_push_tool():
     st.markdown("<div class='card'>", unsafe_allow_html=True)
     st.header("📱 信息推送工具")
@@ -415,7 +390,6 @@ def image_push_tool():
     if st.session_state.push_history:
         df_history = pd.DataFrame(st.session_state.push_history)
 
-        # 时间筛选
         col1, col2 = st.columns(2)
         with col1:
             start_date = st.date_input("起始日期", value=datetime.now().date() - timedelta(days=30))
@@ -448,9 +422,43 @@ def image_push_tool():
     st.markdown("</div>", unsafe_allow_html=True)
 
 # ===================== 模块三：PFMEA 智能生成工具 =====================
-# 注意：知识库来自 LOCAL_KNOWLEDGE_BASE（100+ 工序）和用户导入的 user_knowledge_base
+# 辅助函数：生成条目唯一键（用于去重）
+def get_item_key(item):
+    fields = ['失效模式', '失效后果', '失效原因', '预防措施', '探测措施', '严重度S', '频度O', '探测度D']
+    return tuple(str(item.get(f, '')) for f in fields)
 
-# AI 生成函数（复用之前的代码，但移除了测试按钮）
+# 合并知识库（基于所有字段去重）
+def merge_knowledge(new_knowledge, existing_kb):
+    for proc, items in new_knowledge.items():
+        if proc not in existing_kb:
+            existing_kb[proc] = []
+        existing_keys = {get_item_key(i) for i in existing_kb[proc]}
+        for item in items:
+            key = get_item_key(item)
+            if key not in existing_keys:
+                existing_kb[proc].append(item)
+                existing_keys.add(key)
+    return existing_kb
+
+# 全文搜索知识库（搜索所有字段，返回匹配的工序名）
+def search_knowledge(keyword, local_kb, user_kb):
+    if not keyword:
+        return []
+    keyword_lower = keyword.lower()
+    matched_processes = set()
+    # 合并本地和用户知识库
+    all_kb = {**local_kb, **user_kb}
+    for process, items in all_kb.items():
+        for item in items:
+            # 搜索所有文本字段
+            text_fields = ['失效模式', '失效后果', '失效原因', '预防措施', '探测措施']
+            for field in text_fields:
+                if keyword_lower in str(item.get(field, '')).lower():
+                    matched_processes.add(process)
+                    break
+    return sorted(matched_processes)
+
+# AI 生成函数
 def create_retry_session():
     session = requests.Session()
     retry = Retry(total=3, backoff_factor=1, status_forcelist=[429,500,502,503,504])
@@ -564,34 +572,13 @@ def parse_pfmea_excel(file_bytes):
         st.error(f"解析Excel失败: {e}")
         return {}
 
-def merge_knowledge(knowledge_dict, existing_kb):
-    for proc, items in knowledge_dict.items():
-        if proc not in existing_kb:
-            existing_kb[proc] = []
-        existing_items = existing_kb[proc]
-        existing_keys = {f"{i.get('失效模式','')}_{i.get('失效原因','')}" for i in existing_items}
-        for item in items:
-            key = f"{item.get('失效模式','')}_{item.get('失效原因','')}"
-            if key not in existing_keys:
-                existing_items.append(item)
-                existing_keys.add(key)
-    return existing_kb
-
 def export_knowledge_to_json():
     return json.dumps(st.session_state.user_knowledge_base, ensure_ascii=False, indent=2)
 
 def import_knowledge_from_json(json_str):
     try:
         data = json.loads(json_str)
-        for proc, items in data.items():
-            if proc not in st.session_state.user_knowledge_base:
-                st.session_state.user_knowledge_base[proc] = []
-            existing_keys = {f"{i.get('失效模式','')}_{i.get('失效原因','')}" for i in st.session_state.user_knowledge_base[proc]}
-            for item in items:
-                key = f"{item.get('失效模式','')}_{item.get('失效原因','')}"
-                if key not in existing_keys:
-                    st.session_state.user_knowledge_base[proc].append(item)
-                    existing_keys.add(key)
+        st.session_state.user_knowledge_base = merge_knowledge(data, st.session_state.user_knowledge_base)
         return True
     except:
         return False
@@ -645,6 +632,7 @@ def export_pfmea_excel(pfmea_data, product_type):
     output.seek(0)
     return output
 
+# ===================== PFMEA 主界面 =====================
 def pfmea_tool():
     st.markdown("<div class='card'>", unsafe_allow_html=True)
     st.title("⚡ PFMEA 智能生成系统")
@@ -654,27 +642,34 @@ def pfmea_tool():
     # 产品类型
     product_type = st.radio("产品类型", ["电池包", "充电器"], horizontal=True)
 
-    # 合并本地知识库和用户知识库，得到所有工序列表
-    # 注意：LOCAL_KNOWLEDGE_BASE 已经包含了电池包和充电器的所有工序
+    # 获取所有工序（本地+用户）
     all_processes = set(LOCAL_KNOWLEDGE_BASE.keys())
     if st.session_state.user_knowledge_base:
         all_processes.update(st.session_state.user_knowledge_base.keys())
     all_processes = sorted(all_processes)
 
-    # 搜索过滤工序
-    st.markdown("#### 🔍 搜索工序")
-    search_term = st.text_input("输入关键词过滤工序", placeholder="例如：焊接、测试、来料")
-    if search_term:
-        filtered_processes = [p for p in all_processes if search_term.lower() in p.lower()]
+    # ========== 全文搜索区域 ==========
+    st.markdown("#### 🔍 全文搜索知识库")
+    search_keyword = st.text_input("输入关键词，搜索失效模式、后果、原因、措施等", placeholder="例如：虚焊、短路、漏装")
+    if search_keyword:
+        matched = search_knowledge(search_keyword, LOCAL_KNOWLEDGE_BASE, st.session_state.user_knowledge_base)
+        if matched:
+            st.info(f"找到 {len(matched)} 个包含关键词的工序：{', '.join(matched)}")
+        else:
+            st.warning("未找到匹配的工序")
+    st.markdown("---")
+
+    # 工序选择（支持搜索过滤后的工序）
+    st.markdown("#### 🗂️ 选择工序")
+    # 如果有搜索关键词，则只显示匹配的工序
+    if search_keyword and matched:
+        filtered_processes = matched
     else:
         filtered_processes = all_processes
 
-    st.markdown(f"共找到 **{len(filtered_processes)}** 个工序（总计 {len(all_processes)} 个）")
-
-    # 可搜索的多选框（由于 streamlit 原生不支持搜索，我们使用文本框+多选框的组合）
     selected_processes = st.multiselect("选择工序（可多选）", filtered_processes, default=filtered_processes[:2] if filtered_processes else [])
 
-    # 自定义工序添加
+    # 自定义工序
     col1, col2 = st.columns([3, 1])
     with col1:
         custom_process = st.text_input("自定义工序名称")
@@ -687,6 +682,9 @@ def pfmea_tool():
 
     # 知识库管理
     with st.expander("📚 知识库管理（可导入/编辑/导出）"):
+        st.markdown(f"**本地知识库**：{len(LOCAL_KNOWLEDGE_BASE)} 个工序，共 {sum(len(v) for v in LOCAL_KNOWLEDGE_BASE.values())} 条 PFMEA")
+        st.markdown(f"**用户知识库**：{len(st.session_state.user_knowledge_base)} 个工序，共 {sum(len(v) for v in st.session_state.user_knowledge_base.values())} 条 PFMEA")
+
         uploaded_kb_file = st.file_uploader("导入已有 PFMEA Excel 文件（.xlsx）", type=["xlsx"], key="kb_import")
         if uploaded_kb_file:
             with st.spinner("正在解析文件..."):
@@ -695,6 +693,7 @@ def pfmea_tool():
                     st.session_state.user_knowledge_base = merge_knowledge(kb_data, st.session_state.user_knowledge_base)
                     st.success(f"成功导入 {len(kb_data)} 个工序的条目！")
                     st.rerun()
+
         if st.session_state.user_knowledge_base:
             for proc, items in st.session_state.user_knowledge_base.items():
                 with st.expander(f"📁 {proc}（共{len(items)}条）"):
@@ -725,6 +724,10 @@ def pfmea_tool():
                             st.error("导入失败，文件格式错误")
                     except:
                         st.error("导入失败")
+            if st.button("🗑️ 清空用户知识库", width='stretch'):
+                st.session_state.user_knowledge_base = {}
+                st.success("已清空用户知识库")
+                st.rerun()
         else:
             st.info("暂无用户知识库内容，可通过上传旧PFMEA文件或AI生成后自动入库来积累。")
 
@@ -745,7 +748,6 @@ def pfmea_tool():
         for idx, proc in enumerate(selected_processes):
             progress_bar.progress((idx) / len(selected_processes))
             if gen_mode == "本地标准库（含知识库）":
-                # 从本地库（LOCAL_KNOWLEDGE_BASE）和用户库中获取
                 lib_items = LOCAL_KNOWLEDGE_BASE.get(proc, [])
                 kb_items = st.session_state.user_knowledge_base.get(proc, [])
                 combined = lib_items + kb_items
@@ -758,7 +760,6 @@ def pfmea_tool():
                     schemes, err = generate_pfmea_ai(proc, product_type, scheme_count)
                     if err:
                         st.error(f"{proc} AI生成失败: {err}")
-                        # 降级到本地库
                         lib_items = LOCAL_KNOWLEDGE_BASE.get(proc, [])
                         if lib_items:
                             st.warning(f"已使用本地库作为备用方案")
@@ -797,14 +798,9 @@ def pfmea_tool():
             edited_df = st.data_editor(df_scheme, use_container_width=True, num_rows="dynamic", hide_index=True, key=f"edit_{proc}")
             final_data[proc] = edited_df.to_dict("records")
             if st.button(f"💾 将当前方案存入知识库", key=f"save_kb_{proc}"):
-                if proc not in st.session_state.user_knowledge_base:
-                    st.session_state.user_knowledge_base[proc] = []
-                existing_keys = {f"{i.get('失效模式','')}_{i.get('失效原因','')}" for i in st.session_state.user_knowledge_base[proc]}
-                for item in edited_df.to_dict("records"):
-                    key = f"{item.get('失效模式','')}_{item.get('失效原因','')}"
-                    if key not in existing_keys:
-                        st.session_state.user_knowledge_base[proc].append(item)
-                        existing_keys.add(key)
+                # 去重合并
+                new_kb = {proc: edited_df.to_dict("records")}
+                st.session_state.user_knowledge_base = merge_knowledge(new_kb, st.session_state.user_knowledge_base)
                 st.success(f"已存入知识库（去重）")
                 st.rerun()
             st.divider()
@@ -824,7 +820,7 @@ def pfmea_tool():
 # ===================== 主界面 =====================
 def main():
     if st.session_state.current_page == "home":
-        st.markdown("<div style='text-align: center; padding: 2rem 0 1rem;'><h1>🛠️ 工程工具箱</h1><p style='color:#6c7a6c;'>请选择要使用的工具模块</p></div>", unsafe_allow_html=True)
+        st.markdown("<div style='text-align: center; padding: 1rem 0 0.5rem;'><h1>🛠️ 工程工具箱</h1><p style='color:#6c7a6c; font-size:0.9rem;'>请选择要使用的工具模块</p></div>", unsafe_allow_html=True)
         col1, col2, col3 = st.columns(3)
 
         with col1:
